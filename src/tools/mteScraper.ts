@@ -1,8 +1,10 @@
+import crypto from 'node:crypto';
 import { BrowserContext, chromium, Page } from 'playwright';
 import { prisma } from '../db';
 import { env } from '../config/env';
 import { criarAlertaNovaCct } from '../services/alertService';
 import { extrairTextoPdfComClaude } from '../services/cctOcr';
+import { storePdf } from '../services/documentStorage';
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -36,6 +38,8 @@ async function localizarPrimeiro(page: Page, seletores: string[], campo: string)
   throw new CctUnavailableError(`Seletor do campo ${campo} nao encontrado no Mediador: ${seletores.join(', ')}`);
 }
 
+type ConsultaMediador = { texto: string; pdf?: Buffer; fonteUrl: string };
+
 export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promise<string> {
   const cnpjNormalizado = normalizarCnpj(cnpj);
   const cache = await prisma.convencaoColetiva.findUnique({
@@ -50,18 +54,50 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
     try {
       const context = await browser.newContext();
       const page = await context.newPage();
-      const texto = await consultarMediador(page, context, cnpjNormalizado, anoVigencia);
+      const consulta = await consultarMediador(page, context, cnpjNormalizado, anoVigencia);
+      const documento = consulta.pdf
+        ? await storePdf(
+            consulta.pdf,
+            env.documentStoragePath,
+            `${cnpjNormalizado}-${anoVigencia}-${cryptoHash(consulta.pdf)}.pdf`
+          )
+        : undefined;
 
-      await prisma.convencaoColetiva.upsert({
+      const cct = await prisma.convencaoColetiva.upsert({
         where: { cnpjSindicato_anoVigencia: { cnpjSindicato: cnpjNormalizado, anoVigencia } },
-        update: { textoCompleto: texto, fonteUrl: env.mteUrl, dataConsulta: new Date() },
-        create: { cnpjSindicato: cnpjNormalizado, anoVigencia, textoCompleto: texto, fonteUrl: env.mteUrl }
+        update: {
+          textoCompleto: consulta.texto,
+          fonteUrl: consulta.fonteUrl,
+          documentoStoragePath: documento?.storagePath,
+          hashDocumento: documento?.hashSha256,
+          dataConsulta: new Date()
+        },
+        create: {
+          cnpjSindicato: cnpjNormalizado,
+          anoVigencia,
+          textoCompleto: consulta.texto,
+          fonteUrl: consulta.fonteUrl,
+          documentoStoragePath: documento?.storagePath,
+          hashDocumento: documento?.hashSha256
+        }
       });
-      if (!cache || cache.textoCompleto !== texto) {
+      if (documento) {
+        await prisma.evidenciaCct.create({
+          data: {
+            convencaoColetivaId: cct.id,
+            tipo: 'DOCUMENTO_MTE',
+            url: consulta.fonteUrl,
+            storagePath: documento.storagePath,
+            hashSha256: documento.hashSha256,
+            referencia: 'PDF original capturado no Sistema Mediador.'
+          }
+        });
+      }
+      if (!cache || cache.textoCompleto !== consulta.texto) {
         await criarAlertaNovaCct(cnpjNormalizado, anoVigencia).catch(error => console.warn('[ALERTA] Nao foi possivel criar alerta MTE:', error));
       }
       await browser.close();
-      return texto;
+      return consulta.texto;
     } catch (error) {
       ultimoErro = error;
       await browser.close();
@@ -73,7 +109,11 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
   throw new CctUnavailableError(`CCT indisponivel no momento: ${String(ultimoErro)}`);
 }
 
-async function consultarMediador(page: Page, context: BrowserContext, cnpj: string, anoVigencia: number): Promise<string> {
+function cryptoHash(buffer: Buffer): string {
+  return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+async function consultarMediador(page: Page, context: BrowserContext, cnpj: string, anoVigencia: number): Promise<ConsultaMediador> {
   await page.goto(env.mteUrl, { waitUntil: 'domcontentloaded', timeout: env.mteNavigationTimeoutMs });
   const titulo = await page.title().catch(() => '');
   const corpo = await page.locator('body').innerText().catch(() => '');
@@ -98,6 +138,8 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
   const documentPage = (await popup) ?? page;
   await documentPage.waitForLoadState('domcontentloaded');
   let texto = (await documentPage.locator('body').innerText()).trim();
+  let pdfBuffer: Buffer | undefined;
+  const fonteUrl = documentPage.url();
   if (texto.length < 300) {
     const pdfUrl = documentPage.url();
     const pdf = await context.request.get(pdfUrl, { timeout: env.mteNavigationTimeoutMs });
@@ -105,11 +147,12 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
     if (!pdf.ok() || !contentType.includes('application/pdf')) {
       throw new CctUnavailableError('Mediador retornou texto insuficiente e nao disponibilizou um PDF');
     }
-    texto = await extrairTextoPdfComClaude(await pdf.body());
+    pdfBuffer = await pdf.body();
+    texto = await extrairTextoPdfComClaude(pdfBuffer);
   }
   if (!texto) throw new CctUnavailableError('Mediador retornou uma CCT vazia');
   if (documentPage !== page) await documentPage.close();
-  return texto;
+  return { texto, pdf: pdfBuffer, fonteUrl };
 }
 
 export async function listarCnpjsCacheados(): Promise<Array<{ cnpjSindicato: string; anoVigencia: number }>> {

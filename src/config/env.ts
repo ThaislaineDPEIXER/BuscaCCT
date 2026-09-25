@@ -62,5 +62,6 @@ export const env = {
   corsOrigins: (process.env.CORS_ORIGINS ?? '*').split(',').map(value => value.trim()).filter(Boolean),
   rateLimitWindowMs: numberEnv('RATE_LIMIT_WINDOW_MS', 60_000),
   rateLimitMax: numberEnv('RATE_LIMIT_MAX', 120),
-  tiWebhookUrl: process.env.TI_WEBHOOK_URL ?? ''
+  tiWebhookUrl: process.env.TI_WEBHOOK_URL ?? '',
+  documentStoragePath: process.env.DOCUMENT_STORAGE_PATH ?? 'storage'
 };

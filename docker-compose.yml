@@ -18,8 +18,11 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL deve ser definida no .env}
+      DOCUMENT_STORAGE_PATH: ${DOCUMENT_STORAGE_PATH:-/app/data/documents}
     ports:
       - "3000:3000"
+    volumes:
+      - busca-cct-documents:/app/data
     depends_on:
       db:
         condition: service_healthy
@@ -31,6 +34,9 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: ${DATABASE_URL:?DATABASE_URL deve ser definida no .env}
+      DOCUMENT_STORAGE_PATH: ${DOCUMENT_STORAGE_PATH:-/app/data/documents}
+    volumes:
+      - busca-cct-documents:/app/data
     depends_on:
       db:
         condition: service_healthy
@@ -39,3 +45,4 @@ services:
 
 volumes:
   busca-cct-postgres:
+  busca-cct-documents:

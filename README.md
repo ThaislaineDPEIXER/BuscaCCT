@@ -56,6 +56,8 @@ Endpoints principais:
 
 As importações são idempotentes por hash do arquivo: reenviar o mesmo conteúdo retorna o lote original sem criar novas linhas. A persistência do lote, clientes e linhas ocorre em uma transação serializável; falhas durante o processamento fazem rollback da carga.
 
+PDFs capturados pelo MTE ou pelo fallback sindical são gravados em `DOCUMENT_STORAGE_PATH`, recebem hash SHA-256 e têm sua localização registrada em `ConvencaoColetiva` e `EvidenciaCct`. Em produção, esse caminho deve ser substituído por um adaptador de object storage, como Google Cloud Storage.
+
 ### 2. Worker em background
 O worker roda em cron às 02:00 e percorre sindicatos ativos para buscar atualizações e processar extrações.
 

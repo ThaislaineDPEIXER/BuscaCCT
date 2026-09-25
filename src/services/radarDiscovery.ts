@@ -5,6 +5,7 @@ import { chromium } from 'playwright';
 import { env } from '../config/env';
 import { prisma } from '../db';
 import { criarAlertaNoticiaSite } from './alertService';
+import { storePdf } from './documentStorage';
 
 const anthropic = new Anthropic({ apiKey: env.anthropicApiKey });
 const CNAE_SINDICATO = '9420-1/00';
@@ -177,6 +178,7 @@ export async function buscarCctNoSite(sindicatoId: string): Promise<{ cctId: str
   const texto = await extrairTextoPdfComClaude(pdf);
   const anoVigencia = anoDoDocumento(documentoUrl, texto);
   const hashDocumento = crypto.createHash('sha256').update(pdf).digest('hex');
+  const documento = await storePdf(pdf, env.documentStoragePath, `${sindicato.cnpj}-${anoVigencia}-${hashDocumento}.pdf`);
   const existente = await prisma.convencaoColetiva.findUnique({
     where: { cnpjSindicato_anoVigencia: { cnpjSindicato: sindicato.cnpj, anoVigencia } }
   });
@@ -187,6 +189,7 @@ export async function buscarCctNoSite(sindicatoId: string): Promise<{ cctId: str
         convencaoColetivaId: existente.id,
         tipo: 'DOCUMENTO_SITE_COMPLEMENTAR',
         url: documentoUrl,
+        storagePath: documento.storagePath,
         hashSha256: hashDocumento,
         referencia: 'Documento encontrado no site oficial; CCT MTE preservada como fonte principal.'
       }
@@ -200,7 +203,8 @@ export async function buscarCctNoSite(sindicatoId: string): Promise<{ cctId: str
       textoCompleto: texto,
       fonteTipo: 'SITE',
       fonteUrl: documentoUrl,
-      hashDocumento,
+      documentoStoragePath: documento.storagePath,
+      hashDocumento: documento.hashSha256,
       dataConsulta: new Date()
     },
     create: {
@@ -209,7 +213,8 @@ export async function buscarCctNoSite(sindicatoId: string): Promise<{ cctId: str
       textoCompleto: texto,
       fonteTipo: 'SITE',
       fonteUrl: documentoUrl,
-      hashDocumento,
+      documentoStoragePath: documento.storagePath,
+      hashDocumento: documento.hashSha256,
       status: 'CAPTURADA'
     }
   });
@@ -219,7 +224,8 @@ export async function buscarCctNoSite(sindicatoId: string): Promise<{ cctId: str
       convencaoColetivaId: cct.id,
       tipo: 'DOCUMENTO_SITE',
       url: documentoUrl,
-      hashSha256: hashDocumento,
+      storagePath: documento.storagePath,
+      hashSha256: documento.hashSha256,
       referencia: 'PDF capturado no site oficial do sindicato.'
     }
   });
