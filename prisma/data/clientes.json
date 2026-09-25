@@ -1,0 +1,18 @@
+[
+  {
+    "cnpj": "11222333000100",
+    "razaoSocial": "MERCADO E SUPERMERCADO PENHA LTDA",
+    "cnaePrincipal": "4711302",
+    "descricaoCnae": "Comercio varejista de mercadorias em geral, com predominancia de produtos alimenticios - minimercados, mercearias e armazens",
+    "uf": "SC",
+    "cidade": "Penha"
+  },
+  {
+    "cnpj": "44555666000111",
+    "razaoSocial": "USINAGEM E METALURGICA LITORAL LTDA",
+    "cnaePrincipal": "2539001",
+    "descricaoCnae": "Servicos de usinagem, tornearia e solda",
+    "uf": "SC",
+    "cidade": "Penha"
+  }
+]

@@ -1,0 +1,15 @@
+node_modules/
+dist/
+.env
+prisma/*.db
+prisma/*.db-journal
+.env.*
+!.env.example
+*.db
+*.db-journal
+**/__pycache__/
+*.pyc
+coverage/
+.pytest_cache/
+tmp/
+*.log

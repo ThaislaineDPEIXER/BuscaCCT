@@ -1,0 +1,20 @@
+[
+  {
+    "cnpj": "12345678000199",
+    "razaoSocial": "SINDICATO DOS EMPREGADOS NO COMERCIO DE PENHA E REGIAO",
+    "nomeFantasia": "SEC PENHA",
+    "uf": "SC",
+    "cidade": "Penha",
+    "segmento": "Comercio",
+    "cnae": "9420-1/00"
+  },
+  {
+    "cnpj": "98765432000188",
+    "razaoSocial": "SINDICATO DAS INDUSTRIAS METALURGICAS DE SANTA CATARINA",
+    "nomeFantasia": "SIM-SC",
+    "uf": "SC",
+    "cidade": "Florianopolis",
+    "segmento": "Industria",
+    "cnae": "9420-1/00"
+  }
+]

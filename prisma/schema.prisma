@@ -1,0 +1,235 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+model ConvencaoColetiva {
+  id                    String                @id @default(uuid())
+  cnpjSindicato         String
+  sindicato             Sindicato             @relation(fields: [cnpjSindicato], references: [cnpj], onDelete: Cascade)
+  anoVigencia           Int
+  textoCompleto         String
+  parametrosJson        String?
+  fonteTipo             String                @default("MTE")
+  fonteUrl              String?
+  documentoStoragePath  String?
+  hashDocumento         String?
+  resumoCct             String?
+  status                String                @default("CAPTURADA")
+  dataConsulta          DateTime              @default(now())
+  dataAtualizacao       DateTime              @updatedAt
+  clausulas             ClausulaCct[]
+  impactosFolha         ImpactoFolha[]
+  contribuicoes         ContribuicaoSindical[]
+  evidencias            EvidenciaCct[]
+  exportacoes           ExportacaoSindicato[]
+
+  @@unique([cnpjSindicato, anoVigencia])
+  @@index([dataAtualizacao])
+  @@index([status, anoVigencia])
+}
+
+model Sindicato {
+  id              String      @id @default(uuid())
+  cnpj            String      @unique
+  cnpjBase        String?
+  razaoSocial     String      @default("")
+  nomeFantasia    String?
+  uf              String      @default("")
+  cidade          String      @default("")
+  cnae            String      @default("")
+  segmento        String?
+  mesDataBase     Int?
+  siteUrl         String?
+  siteOficial     String?
+  ativo           Boolean     @default(true)
+  statusMonitoramento String   @default("ATIVO")
+  ultimaVarredura DateTime?
+  ultimaVarreduraSite DateTime?
+  criadoEm        DateTime    @default(now())
+  atualizadoEm    DateTime    @updatedAt
+  convencoes      ConvencaoColetiva[]
+  varreduras      RadarScan[]
+  enquadramentos  EnquadramentoSindical[]
+  alertas         AlertaDP[]
+  exportacoes     ExportacaoSindicato[]
+}
+
+model RadarScan {
+  id             String    @id @default(uuid())
+  sindicatoId    String
+  sindicato      Sindicato @relation(fields: [sindicatoId], references: [id], onDelete: Cascade)
+  urlConsultada  String
+  novaCct        Boolean
+  resumo         String?
+  evidencias     String?
+  textoHash      String?
+  consultadoEm   DateTime  @default(now())
+
+  @@index([sindicatoId, consultadoEm])
+}
+
+model Cliente {
+  id              String                  @id @default(uuid())
+  codigoErp       String?
+  cnpj            String                  @unique
+  razaoSocial     String
+  cnaePrincipal   String
+  descricaoCnae   String
+  uf              String
+  cidade          String
+  criadoEm        DateTime                @default(now())
+  atualizadoEm    DateTime                @updatedAt
+  enquadramentos  EnquadramentoSindical[]
+  importacoes     ImportacaoLinha[]
+
+  @@index([uf, cidade])
+  @@index([cnaePrincipal])
+  @@index([codigoErp])
+}
+
+model ImportacaoLote {
+  id              String             @id @default(uuid())
+  nomeArquivo     String
+  tipo            String             @default("CLIENTES")
+  status          String             @default("PROCESSANDO")
+  totalLinhas     Int                @default(0)
+  processadas     Int                @default(0)
+  invalidas       Int                @default(0)
+  criadoEm        DateTime           @default(now())
+  finalizadoEm    DateTime?
+  linhas          ImportacaoLinha[]
+}
+
+model ImportacaoLinha {
+  id              String          @id @default(uuid())
+  loteId          String
+  lote            ImportacaoLote  @relation(fields: [loteId], references: [id], onDelete: Cascade)
+  numeroLinha     Int
+  status          String          @default("PENDENTE")
+  mensagem        String?
+  dadosJson       String
+  clienteId       String?
+  cliente         Cliente?        @relation(fields: [clienteId], references: [id], onDelete: SetNull)
+  criadoEm        DateTime        @default(now())
+
+  @@unique([loteId, numeroLinha])
+  @@index([status])
+}
+
+model ClausulaCct {
+  id                  String             @id @default(uuid())
+  convencaoColetivaId String
+  convencaoColetiva   ConvencaoColetiva  @relation(fields: [convencaoColetivaId], references: [id], onDelete: Cascade)
+  referencia          String?
+  titulo              String
+  resumo              String
+  textoEvidencia      String?
+  criadoEm            DateTime           @default(now())
+
+  @@index([convencaoColetivaId])
+}
+
+model ImpactoFolha {
+  id                  String             @id @default(uuid())
+  convencaoColetivaId String
+  convencaoColetiva   ConvencaoColetiva  @relation(fields: [convencaoColetivaId], references: [id], onDelete: Cascade)
+  categoria           String
+  descricao           String
+  valorAnterior       Float?
+  valorNovo           Float?
+  percentual          Float?
+  vigencia            String?
+  evidencia           String?
+  status              String             @default("PENDENTE_VALIDACAO")
+  criadoEm            DateTime           @default(now())
+
+  @@index([convencaoColetivaId, status])
+}
+
+model ContribuicaoSindical {
+  id                  String             @id @default(uuid())
+  convencaoColetivaId String
+  convencaoColetiva   ConvencaoColetiva  @relation(fields: [convencaoColetivaId], references: [id], onDelete: Cascade)
+  tipo                String
+  valorTexto          String?
+  valorNumerico       Float?
+  percentual          Float?
+  vencimento          String?
+  obrigatoriedade     String?
+  dadosPagamento      String?
+  evidencia           String?
+  status              String             @default("NOVA")
+  criadoEm            DateTime           @default(now())
+  atualizadoEm        DateTime           @updatedAt
+
+  @@index([status, vencimento])
+  @@index([convencaoColetivaId])
+}
+
+model EvidenciaCct {
+  id                  String             @id @default(uuid())
+  convencaoColetivaId String
+  convencaoColetiva   ConvencaoColetiva  @relation(fields: [convencaoColetivaId], references: [id], onDelete: Cascade)
+  tipo                String
+  url                 String?
+  storagePath         String?
+  hashSha256          String?
+  referencia          String?
+  criadoEm            DateTime           @default(now())
+
+  @@index([convencaoColetivaId])
+}
+
+model ExportacaoSindicato {
+  id                  String             @id @default(uuid())
+  convencaoColetivaId String?
+  convencaoColetiva   ConvencaoColetiva? @relation(fields: [convencaoColetivaId], references: [id], onDelete: SetNull)
+  sindicatoCnpj       String
+  sindicato           Sindicato          @relation(fields: [sindicatoCnpj], references: [cnpj], onDelete: Cascade)
+  formato             String
+  status              String             @default("SOLICITADA")
+  storagePath         String?
+  erro                String?
+  criadoEm            DateTime           @default(now())
+  finalizadoEm        DateTime?
+
+  @@index([sindicatoCnpj, status])
+}
+
+model EnquadramentoSindical {
+  id           String    @id @default(uuid())
+  clienteId    String
+  sindicatoId  String
+  tipo         String
+  status       String    @default("SUGERIDO_IA")
+  criadoEm     DateTime  @default(now())
+  atualizadoEm DateTime  @updatedAt
+  cliente      Cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)
+  sindicato    Sindicato @relation(fields: [sindicatoId], references: [id], onDelete: Cascade)
+
+  @@unique([clienteId, sindicatoId])
+  @@index([status])
+}
+
+model AlertaDP {
+  id                 String    @id @default(uuid())
+  sindicatoCnpj      String
+  titulo             String
+  mensagem           String
+  tipo               String
+  prioridade         String
+  status             String    @default("PENDENTE")
+  clientesImpactados Int       @default(0)
+  chaveUnica         String?   @unique
+  dataCriacao        DateTime  @default(now())
+  dataAtualizacao    DateTime  @updatedAt
+  sindicato          Sindicato @relation(fields: [sindicatoCnpj], references: [cnpj], onDelete: Cascade)
+
+  @@index([status, prioridade])
+  @@index([sindicatoCnpj, dataCriacao])
+}
