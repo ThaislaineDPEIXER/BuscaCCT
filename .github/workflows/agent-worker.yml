@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: agent-worker
+  group: agent-worker-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
@@ -41,4 +41,4 @@ jobs:
         run: npm run build
 
       - name: Run nightly worker
-        run: node -e "const { executarFilaMte } = require('./dist/jobs/dailyUpdate'); executarFilaMte().catch((error) => { console.error(error); process.exit(1); });"
+        run: node -e "(async () => { try { const { executarFilaMte } = require('./dist/jobs/dailyUpdate'); await executarFilaMte(); } catch (error) { console.error(error); process.exit(1); } })();"
