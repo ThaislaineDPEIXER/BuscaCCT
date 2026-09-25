@@ -3,6 +3,7 @@ import * as github from '@actions/github';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 const MAX_DIFF_LENGTH = 120_000;
+const COMMENT_MARKER = '## 🤖 Revisão Arquitetural Automatizada';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -79,8 +80,30 @@ async function analyzeDiff(diffText: string): Promise<string> {
   return response;
 }
 
-async function postReviewComment(token: string, owner: string, repo: string, pullNumber: number, body: string): Promise<void> {
+async function upsertReviewComment(token: string, owner: string, repo: string, pullNumber: number, body: string): Promise<void> {
   const octokit = github.getOctokit(token);
+  const authenticatedUser = await octokit.rest.users.getAuthenticated();
+  const comments = await octokit.paginate(octokit.rest.issues.listComments, {
+    owner,
+    repo,
+    issue_number: pullNumber,
+    per_page: 100
+  });
+
+  const existingComment = comments.find(comment =>
+    comment.user?.login === authenticatedUser.data.login && comment.body?.startsWith(COMMENT_MARKER)
+  );
+
+  if (existingComment) {
+    await octokit.rest.issues.updateComment({
+      owner,
+      repo,
+      comment_id: existingComment.id,
+      body
+    });
+    return;
+  }
+
   await octokit.rest.issues.createComment({
     owner,
     repo,
@@ -105,9 +128,9 @@ async function main(): Promise<void> {
 
   const diffText = await loadPullRequestDiff(token, owner, repo, pullNumber);
   const review = await analyzeDiff(diffText);
-  const commentBody = `## 🤖 Revisão Arquitetural Automatizada\n\n${review}`;
+  const commentBody = `${COMMENT_MARKER}\n\n${review}`;
 
-  await postReviewComment(token, owner, repo, pullNumber, commentBody);
+  await upsertReviewComment(token, owner, repo, pullNumber, commentBody);
   core.info(`Comentário publicado no Pull Request #${pullNumber}.`);
 }
 
