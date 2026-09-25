@@ -41,4 +41,4 @@ jobs:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PORTAL_AUTH_ENABLED: ${{ secrets.PORTAL_AUTH_ENABLED }}
-        run: node -e "(async () => { try { const { executarFilaMte } = require('./dist/jobs/dailyUpdate'); await executarFilaMte(); } catch (error) { console.error(error); process.exit(1); } })();"
+        run: npm run start:worker
