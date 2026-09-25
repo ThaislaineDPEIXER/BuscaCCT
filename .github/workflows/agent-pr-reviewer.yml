@@ -1,7 +1,7 @@
 name: Agent PR Reviewer
 
 on:
-  pull_request:
+  pull_request_target:
     types:
       - opened
       - synchronize
@@ -26,9 +26,6 @@ jobs:
 
       - name: Install project dependencies
         run: npm ci
-
-      - name: Install reviewer dependencies
-        run: npm install @actions/github @actions/core @google/generative-ai
 
       - name: Run PR reviewer agent
         env:
