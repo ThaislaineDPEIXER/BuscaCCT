@@ -14,6 +14,7 @@ Este diretório reúne os principais artefatos prontos para apoiar a fase de Go-
 8. [Documento executivo final — Go-Live](./08-go-live-documento-executivo.md)
 9. [Migração para ambiente empresarial com Terraform](./09-migracao-terraform.md)
 10. [Kit final de Go-Live](./10-kit-go-live-final.md)
+11. [Dossiê final de implantação](./11-dossie-implantacao-final.md)
 
 ## Ordem recomendada de uso
 
