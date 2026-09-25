@@ -1,0 +1,44 @@
+name: Agent Worker
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-worker
+  cancel-in-progress: false
+
+jobs:
+  nightly-worker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      NODE_ENV: production
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      PORTAL_AUTH_ENABLED: ${{ secrets.PORTAL_AUTH_ENABLED }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build project
+        run: npm run build
+
+      - name: Run nightly worker
+        run: node -e "const { executarFilaMte } = require('./dist/jobs/dailyUpdate'); executarFilaMte().catch((error) => { console.error(error); process.exit(1); });"
