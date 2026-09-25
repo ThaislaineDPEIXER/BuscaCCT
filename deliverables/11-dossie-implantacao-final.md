@@ -49,6 +49,8 @@ POSTGRES_USER=radar
 POSTGRES_PASSWORD=senha-do-ambiente
 ANTHROPIC_API_KEY=token-real
 DOCUMENT_STORAGE_PATH=/app/data/documents
+DOCUMENT_STORAGE_DRIVER=gcs
+GCS_BUCKET_NAME=projeto-cct-pdfs
 PORTAL_AUTH_ENABLED=true
 PORTAL_API_KEY=chave-forte-do-portal
 CORS_ORIGINS=https://portal.empresa.com
@@ -160,7 +162,7 @@ Garantias:
 ## 7. Fluxo de CCT e evidência
 
 1. MTE ou site sindical fornece o documento.
-2. PDF original é salvo em `DOCUMENT_STORAGE_PATH`.
+2. PDF original é salvo no filesystem local ou no bucket GCS selecionado por `DOCUMENT_STORAGE_DRIVER`.
 3. O hash SHA-256 é registrado.
 4. `EvidenciaCct` guarda URL, storage path e referência.
 5. `cctOcr.ts` transcreve o PDF.
@@ -168,7 +170,7 @@ Garantias:
 7. `cctExtractionPersistence.ts` grava impactos e contribuições.
 8. Registros já validados pelo DP são preservados.
 
-O storage atual é filesystem persistente via volume Docker. Para GCS, implementar um adaptador de storage mantendo o mesmo contrato de `storePdf` antes de remover o volume local.
+O storage suporta filesystem local (`DOCUMENT_STORAGE_DRIVER=local`) ou Google Cloud Storage (`DOCUMENT_STORAGE_DRIVER=gcs` e `GCS_BUCKET_NAME`). Em GCP, configure Application Default Credentials na identidade de runtime e conceda acesso ao bucket provisionado pelo Terraform; não distribua chaves JSON da service account. Para o worker no GitHub Actions, defina as variáveis `DOCUMENT_STORAGE_DRIVER`, `GCS_BUCKET_NAME`, `GCP_WORKLOAD_IDENTITY_PROVIDER` e `GCP_SERVICE_ACCOUNT` no repositório e configure o provedor Workload Identity Federation para confiar no repositório/branch correto. O modo local continua disponível para desenvolvimento e Docker Compose.
 
 ## 8. Worker
 

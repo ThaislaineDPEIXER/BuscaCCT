@@ -20,6 +20,15 @@ function booleanEnv(name: string, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
 
+const documentStorageDriver = process.env.DOCUMENT_STORAGE_DRIVER ?? 'local';
+if (!['local', 'gcs'].includes(documentStorageDriver)) {
+  throw new Error('DOCUMENT_STORAGE_DRIVER deve ser local ou gcs');
+}
+const gcsBucketName = process.env.GCS_BUCKET_NAME ?? '';
+if (documentStorageDriver === 'gcs' && !gcsBucketName) {
+  throw new Error('GCS_BUCKET_NAME e obrigatorio quando DOCUMENT_STORAGE_DRIVER=gcs');
+}
+
 export const env = {
   port: numberEnv('PORT', 3000),
   databaseUrl: required('DATABASE_URL'),
@@ -70,5 +79,7 @@ export const env = {
   aiRateLimitWindowMs: numberEnv('AI_RATE_LIMIT_WINDOW_MS', 60_000),
   aiRateLimitMax: numberEnv('AI_RATE_LIMIT_MAX', 30),
   tiWebhookUrl: process.env.TI_WEBHOOK_URL ?? '',
-  documentStoragePath: process.env.DOCUMENT_STORAGE_PATH ?? 'storage'
+  documentStoragePath: process.env.DOCUMENT_STORAGE_PATH ?? 'storage',
+  documentStorageDriver,
+  gcsBucketName
 };

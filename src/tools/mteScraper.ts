@@ -59,7 +59,8 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
         ? await storePdf(
             consulta.pdf,
             env.documentStoragePath,
-            `${cnpjNormalizado}-${anoVigencia}-${cryptoHash(consulta.pdf)}.pdf`
+            `${cnpjNormalizado}-${anoVigencia}-${cryptoHash(consulta.pdf)}.pdf`,
+            env.documentStorageDriver === 'gcs' ? env.gcsBucketName : undefined
           )
         : undefined;
 

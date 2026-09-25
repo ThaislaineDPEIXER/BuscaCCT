@@ -1,0 +1,67 @@
+name: Agent SecOps
+
+on:
+  schedule:
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: agent-secops-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  dependency-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Apply compatible security updates
+        id: audit
+        shell: bash
+        run: |
+          set +e
+          npm audit fix
+          audit_status=$?
+          set -e
+
+          if git diff --quiet -- package.json package-lock.json; then
+            changed=false
+          else
+            changed=true
+          fi
+
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "audit_status=$audit_status" >> "$GITHUB_OUTPUT"
+
+      - name: Open or update security pull request
+        if: steps.audit.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          branch: chore/npm-audit-fix
+          delete-branch: true
+          title: 'chore(deps): apply npm security updates'
+          commit-message: 'chore(deps): apply npm security updates'
+          body: |
+            Atualizações compatíveis de dependências aplicadas automaticamente por `npm audit fix`.
+
+            Revise o diff e os resultados de CI antes de integrar.
+
+      - name: Fail if vulnerabilities remain
+        if: steps.audit.outputs.audit_status != '0'
+        run: exit 1

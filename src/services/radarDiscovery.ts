@@ -178,7 +178,12 @@ export async function buscarCctNoSite(sindicatoId: string): Promise<{ cctId: str
   const texto = await extrairTextoPdfComClaude(pdf);
   const anoVigencia = anoDoDocumento(documentoUrl, texto);
   const hashDocumento = crypto.createHash('sha256').update(pdf).digest('hex');
-  const documento = await storePdf(pdf, env.documentStoragePath, `${sindicato.cnpj}-${anoVigencia}-${hashDocumento}.pdf`);
+  const documento = await storePdf(
+    pdf,
+    env.documentStoragePath,
+    `${sindicato.cnpj}-${anoVigencia}-${hashDocumento}.pdf`,
+    env.documentStorageDriver === 'gcs' ? env.gcsBucketName : undefined
+  );
   const existente = await prisma.convencaoColetiva.findUnique({
     where: { cnpjSindicato_anoVigencia: { cnpjSindicato: sindicato.cnpj, anoVigencia } }
   });
