@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: agent-worker-${{ github.ref }}-${{ github.event_name }}
+  group: agent-worker-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
