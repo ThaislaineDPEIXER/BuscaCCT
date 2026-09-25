@@ -60,6 +60,8 @@ PDFs capturados pelo MTE ou pelo fallback sindical são gravados em `DOCUMENT_ST
 
 Após a transcrição, `src/services/claudeAgent.ts` valida um contrato JSON estrito com `impactos_folha` e `contribuicoes_sindicais`. O serviço `src/services/cctExtractionPersistence.ts` grava esses itens em `ImpactoFolha` e `ContribuicaoSindical` dentro de uma transação serializável, preservando evidências textuais e registros já validados pelo DP. O módulo `src/services/cctOcr.ts` permanece responsável exclusivamente pela transcrição de PDFs.
 
+O worker usa locks distribuídos em PostgreSQL por CNPJ (`WORKER_LOCK_TTL_MS`). Falhas do MTE não bloqueiam a fila: cada sindicato registra `proximaTentativa` e `falhasConsecutivas`, com backoff exponencial entre `MTE_RETRY_BASE_DELAY_MS` e `MTE_RETRY_MAX_DELAY_MS`.
+
 ### 2. Worker em background
 O worker roda em cron às 02:00 e percorre sindicatos ativos para buscar atualizações e processar extrações.
 

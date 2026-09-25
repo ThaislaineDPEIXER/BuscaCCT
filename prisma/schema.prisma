@@ -50,6 +50,8 @@ model Sindicato {
   statusMonitoramento String   @default("ATIVO")
   ultimaVarredura DateTime?
   ultimaVarreduraSite DateTime?
+  proximaTentativa DateTime?
+  falhasConsecutivas Int       @default(0)
   criadoEm        DateTime    @default(now())
   atualizadoEm    DateTime    @updatedAt
   convencoes      ConvencaoColetiva[]
@@ -57,6 +59,16 @@ model Sindicato {
   enquadramentos  EnquadramentoSindical[]
   alertas         AlertaDP[]
   exportacoes     ExportacaoSindicato[]
+}
+
+model WorkerLock {
+  chave        String   @id
+  ownerId      String
+  expiresAt    DateTime
+  adquiridoEm  DateTime @default(now())
+  atualizadoEm DateTime @updatedAt
+
+  @@index([expiresAt])
 }
 
 model RadarScan {

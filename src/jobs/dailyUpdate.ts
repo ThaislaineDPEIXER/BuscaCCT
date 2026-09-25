@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import cron from 'node-cron';
 import { env } from '../config/env';
 import { prisma } from '../db';
@@ -6,6 +7,7 @@ import { persistirExtracaoCct } from '../services/cctExtractionPersistence';
 import { enviarDigest, gerarAlertasDataBase } from '../services/alertService';
 import { notificarFalhaMte } from '../services/operationalAlert';
 import { varrerSindicato } from '../services/radarDiscovery';
+import { adquirirWorkerLock } from '../services/workerLock';
 import { buscarESalvarCCT } from '../tools/mteScraper';
 
 const pausar = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -14,6 +16,12 @@ const delayAleatorio = (): number => {
   const maximo = Math.max(env.mteDelayMinMs, env.mteDelayMaxMs);
   return Math.floor(Math.random() * (maximo - minimo + 1) + minimo);
 };
+
+export function calcularProximaTentativa(falhasConsecutivas: number, agora = new Date()): Date {
+  const expoente = Math.max(0, falhasConsecutivas - 1);
+  const atraso = Math.min(env.mteRetryBaseDelayMs * (2 ** expoente), env.mteRetryMaxDelayMs);
+  return new Date(agora.getTime() + atraso);
+}
 
 let varreduraEmAndamento = false;
 
@@ -26,15 +34,18 @@ async function selecionarFila() {
     where: {
       ativo: true,
       enquadramentos: { some: { status: 'VALIDADO_DP' } },
-      OR: [
-        { ultimaVarredura: null },
-        { ultimaVarredura: { lt: limite } },
-        { mesDataBase: mesAtual }
+      AND: [
+        { OR: [{ proximaTentativa: null }, { proximaTentativa: { lte: agora } }] },
+        { OR: [
+          { ultimaVarredura: null },
+          { ultimaVarredura: { lt: limite } },
+          { mesDataBase: mesAtual }
+        ] }
       ]
     },
     orderBy: [{ ultimaVarredura: 'asc' }, { atualizadoEm: 'asc' }],
     take: env.mteBatchSize,
-    select: { id: true, cnpj: true, razaoSocial: true, mesDataBase: true }
+    select: { id: true, cnpj: true, razaoSocial: true, mesDataBase: true, falhasConsecutivas: true }
   });
 }
 
@@ -50,6 +61,13 @@ export async function executarFilaMte(): Promise<void> {
     console.info(`[MTE] ${sindicatos.length} sindicatos selecionados para a fila.`);
 
     for (const sindicato of sindicatos) {
+      const ownerId = crypto.randomUUID();
+      const liberarLock = await adquirirWorkerLock(`mte:${sindicato.cnpj}`, ownerId, env.workerLockTtlMs);
+      if (!liberarLock) {
+        console.info(`[MTE] CNPJ ${sindicato.cnpj} já está sendo processado por outro worker.`);
+        continue;
+      }
+
       try {
         console.info(`[MTE] Processando ${sindicato.cnpj} (${sindicato.razaoSocial})`);
         const anoVigencia = new Date().getFullYear();
@@ -57,12 +75,24 @@ export async function executarFilaMte(): Promise<void> {
         const parametros = await extrairCctComClaude(textoBruto);
 
         await persistirExtracaoCct(sindicato.cnpj, anoVigencia, parametros);
+        await prisma.sindicato.update({
+          where: { id: sindicato.id },
+          data: { ultimaVarredura: new Date(), proximaTentativa: null, falhasConsecutivas: 0 }
+        });
         console.info(`[MTE] CCT processada e extraída para ${sindicato.cnpj}`);
       } catch (error) {
         console.error(`[MTE] Falha no CNPJ ${sindicato.cnpj}:`, error);
         await notificarFalhaMte(sindicato.cnpj, error);
+        const falhasConsecutivas = sindicato.falhasConsecutivas + 1;
+        await prisma.sindicato.update({
+          where: { id: sindicato.id },
+          data: {
+            falhasConsecutivas,
+            proximaTentativa: calcularProximaTentativa(falhasConsecutivas)
+          }
+        });
       } finally {
-        await prisma.sindicato.update({ where: { id: sindicato.id }, data: { ultimaVarredura: new Date() } });
+        await liberarLock();
         const espera = delayAleatorio();
         console.info(`[MTE] Pausa de ${Math.round(espera / 1_000)}s antes do próximo sindicato.`);
         await pausar(espera);
