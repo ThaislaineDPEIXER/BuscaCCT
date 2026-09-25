@@ -69,6 +69,8 @@ test('validarExtracaoCct aceita o contrato estruturado e preserva nulos', () => 
       quebra_de_caixa_mensal: null,
       anuenio_percentual: null
     },
+    impactos_folha: [],
+    contribuicoes_sindicais: [],
     resumo_mudancas: null
   });
   assert.equal(extracao.pisos_salariais[0].valor, 1950.5);

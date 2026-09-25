@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { env } from '../config/env';
 import { prisma } from '../db';
 import { extrairCctComClaude } from '../services/claudeAgent';
+import { persistirExtracaoCct } from '../services/cctExtractionPersistence';
 import { enviarDigest, gerarAlertasDataBase } from '../services/alertService';
 import { notificarFalhaMte } from '../services/operationalAlert';
 import { varrerSindicato } from '../services/radarDiscovery';
@@ -55,10 +56,7 @@ export async function executarFilaMte(): Promise<void> {
         const textoBruto = await buscarESalvarCCT(sindicato.cnpj, anoVigencia);
         const parametros = await extrairCctComClaude(textoBruto);
 
-        await prisma.convencaoColetiva.update({
-          where: { cnpjSindicato_anoVigencia: { cnpjSindicato: sindicato.cnpj, anoVigencia } },
-          data: { parametrosJson: JSON.stringify(parametros) }
-        });
+        await persistirExtracaoCct(sindicato.cnpj, anoVigencia, parametros);
         console.info(`[MTE] CCT processada e extraída para ${sindicato.cnpj}`);
       } catch (error) {
         console.error(`[MTE] Falha no CNPJ ${sindicato.cnpj}:`, error);

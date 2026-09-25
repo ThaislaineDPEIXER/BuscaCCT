@@ -58,6 +58,8 @@ As importações são idempotentes por hash do arquivo: reenviar o mesmo conteú
 
 PDFs capturados pelo MTE ou pelo fallback sindical são gravados em `DOCUMENT_STORAGE_PATH`, recebem hash SHA-256 e têm sua localização registrada em `ConvencaoColetiva` e `EvidenciaCct`. Em produção, esse caminho deve ser substituído por um adaptador de object storage, como Google Cloud Storage.
 
+Após a transcrição, `src/services/claudeAgent.ts` valida um contrato JSON estrito com `impactos_folha` e `contribuicoes_sindicais`. O serviço `src/services/cctExtractionPersistence.ts` grava esses itens em `ImpactoFolha` e `ContribuicaoSindical` dentro de uma transação serializável, preservando evidências textuais e registros já validados pelo DP. O módulo `src/services/cctOcr.ts` permanece responsável exclusivamente pela transcrição de PDFs.
+
 ### 2. Worker em background
 O worker roda em cron às 02:00 e percorre sindicatos ativos para buscar atualizações e processar extrações.
 

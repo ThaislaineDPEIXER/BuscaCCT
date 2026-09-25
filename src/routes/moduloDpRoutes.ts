@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { prisma } from '../db';
 import { assinarAlertas, atualizarAlerta, listarAlertas } from '../services/alertService';
 import { consultarBuscador, extrairCctComClaude, validarExtracaoCct } from '../services/claudeAgent';
+import { persistirExtracaoCct } from '../services/cctExtractionPersistence';
 import { buscarESalvarCCT } from '../tools/mteScraper';
 
 export const moduloDpRoutes = Router();
@@ -71,10 +72,7 @@ moduloDpRoutes.get('/parametros-cct/:cnpj', async (req, res) => {
     }
 
     if (precisaPersistir) {
-      await prisma.convencaoColetiva.update({
-        where: { cnpjSindicato_anoVigencia: { cnpjSindicato: cnpj, anoVigencia: cct?.anoVigencia ?? anoAtual } },
-        data: { parametrosJson: JSON.stringify(parametros) }
-      });
+      await persistirExtracaoCct(cnpj, cct?.anoVigencia ?? anoAtual, parametros);
     }
 
     res.json({

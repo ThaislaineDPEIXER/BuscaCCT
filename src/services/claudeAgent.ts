@@ -18,6 +18,25 @@ export interface ExtracaoCct {
     quebra_de_caixa_mensal: number | null;
     anuenio_percentual: number | null;
   };
+  impactos_folha: Array<{
+    categoria: 'PISO_SALARIAL' | 'HORA_EXTRA' | 'BENEFICIO' | 'REAJUSTE' | 'OUTRO';
+    descricao: string;
+    valor_anterior: number | null;
+    valor_novo: number | null;
+    percentual: number | null;
+    vigencia: string | null;
+    evidencia: string | null;
+  }>;
+  contribuicoes_sindicais: Array<{
+    tipo: string;
+    valor_texto: string | null;
+    valor_numerico: number | null;
+    percentual: number | null;
+    vencimento: string | null;
+    obrigatoriedade: string | null;
+    dados_pagamento: string | null;
+    evidencia: string | null;
+  }>;
   resumo_mudancas: string | null;
 }
 
@@ -27,7 +46,9 @@ Sua única função é ler o texto bruto de uma Convenção Coletiva de Trabalho
 [REGRAS DE EXTRAÇÃO]
 1. ZERO ALUCINAÇÃO: Baseie-se estritamente no texto fornecido. Se uma informação (como 'quebra de caixa' ou 'vale transporte') não estiver escrita no texto, retorne null. NUNCA invente ou assuma valores baseados na CLT.
 2. NÚMEROS LIMPOS: Extraia valores monetários apenas como números decimais (ex: 1850.50), sem o símbolo "R$". Extraia percentuais apenas como números inteiros ou decimais (ex: 60), sem o símbolo "%".
-3. FOCO NAS CLÁUSULAS: Busque os pisos salariais das categorias base (ex: faxineiro, auxiliar, vendedor, operador de caixa, piso geral).
+3. FOCO NAS CLÁUSULAS: Busque os pisos salariais das categorias base (ex: faxineiro, auxiliar, vendedor, operador de caixa, piso geral), percentuais de horas extras, benefícios e contribuições.
+4. EVIDÊNCIA: Cada impacto e contribuição deve conter um trecho curto e literal do documento no campo evidencia, ou null quando não houver trecho identificável.
+5. NÃO CALCULE: Não derive reajustes, valores ou percentuais. Registre somente números explicitamente presentes no documento.
 
 [FORMATO DE SAÍDA OBRIGATÓRIO]
 Você deve retornar ÚNICA e EXCLUSIVAMENTE um objeto JSON válido, seguindo exatamente o schema abaixo. Não adicione nenhuma saudação, explicação, introdução ou formatação Markdown. Apenas o JSON puro.
@@ -46,6 +67,25 @@ Schema esperado:
     "quebra_de_caixa_mensal": 150.00,
     "anuenio_percentual": 1
   },
+  "impactos_folha": [{
+    "categoria": "PISO_SALARIAL",
+    "descricao": "Piso geral da categoria",
+    "valor_anterior": null,
+    "valor_novo": 1950.00,
+    "percentual": null,
+    "vigencia": "01/01/2026",
+    "evidencia": "Cláusula 3ª: o piso salarial será de R$ 1.950,00."
+  }],
+  "contribuicoes_sindicais": [{
+    "tipo": "ASSISTENCIAL",
+    "valor_texto": "1% do salário",
+    "valor_numerico": null,
+    "percentual": 1,
+    "vencimento": "até o quinto dia útil",
+    "obrigatoriedade": "conforme cláusula e direito de oposição descritos no documento",
+    "dados_pagamento": null,
+    "evidencia": "Cláusula 20ª: contribuição assistencial de 1%."
+  }],
   "resumo_mudancas": "Um parágrafo curto, com no máximo três linhas, ou null."
 }`;
 
@@ -97,7 +137,7 @@ function extrairTexto(resposta: Anthropic.Message): string {
 export function validarExtracaoCct(valor: unknown): ExtracaoCct {
   if (!valor || typeof valor !== 'object') throw new Error('Extracao CCT nao e um objeto JSON');
   const dados = valor as Partial<ExtracaoCct>;
-  if (!Array.isArray(dados.pisos_salariais) || !Array.isArray(dados.horas_extras) || !dados.beneficios || typeof dados.beneficios !== 'object') {
+  if (!Array.isArray(dados.pisos_salariais) || !Array.isArray(dados.horas_extras) || !dados.beneficios || typeof dados.beneficios !== 'object' || !Array.isArray(dados.impactos_folha) || !Array.isArray(dados.contribuicoes_sindicais)) {
     throw new Error('Extracao CCT fora do schema esperado');
   }
   for (const piso of dados.pisos_salariais) {
@@ -105,6 +145,18 @@ export function validarExtracaoCct(valor: unknown): ExtracaoCct {
   }
   for (const hora of dados.horas_extras) {
     if (typeof hora.condicao !== 'string' || typeof hora.percentual !== 'number') throw new Error('Hora extra fora do schema');
+  }
+  for (const impacto of dados.impactos_folha) {
+    if (!['PISO_SALARIAL', 'HORA_EXTRA', 'BENEFICIO', 'REAJUSTE', 'OUTRO'].includes(impacto.categoria) || typeof impacto.descricao !== 'string') throw new Error('Impacto de folha fora do schema');
+    for (const campo of ['valor_anterior', 'valor_novo', 'percentual'] as const) {
+      if (impacto[campo] !== null && typeof impacto[campo] !== 'number') throw new Error('Valor de impacto fora do schema');
+    }
+  }
+  for (const contribuicao of dados.contribuicoes_sindicais) {
+    if (typeof contribuicao.tipo !== 'string') throw new Error('Contribuicao sindical fora do schema');
+    for (const campo of ['valor_numerico', 'percentual'] as const) {
+      if (contribuicao[campo] !== null && typeof contribuicao[campo] !== 'number') throw new Error('Valor de contribuicao fora do schema');
+    }
   }
   return dados as ExtracaoCct;
 }

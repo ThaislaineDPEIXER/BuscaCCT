@@ -17,6 +17,25 @@ test('validarExtracaoCct aceita o contrato estruturado e preserva campos nulos',
       quebra_de_caixa_mensal: null,
       anuenio_percentual: null
     },
+    impactos_folha: [{
+      categoria: 'PISO_SALARIAL',
+      descricao: 'Piso geral',
+      valor_anterior: null,
+      valor_novo: 1950.5,
+      percentual: null,
+      vigencia: '01/01/2026',
+      evidencia: 'Cláusula 3ª: piso de R$ 1.950,50.'
+    }],
+    contribuicoes_sindicais: [{
+      tipo: 'ASSISTENCIAL',
+      valor_texto: '1%',
+      valor_numerico: null,
+      percentual: 1,
+      vencimento: null,
+      obrigatoriedade: null,
+      dados_pagamento: null,
+      evidencia: 'Cláusula 20ª: 1%.'
+    }],
     resumo_mudancas: null
   });
 
