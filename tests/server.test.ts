@@ -138,6 +138,57 @@ test('POST /api/importacao/clientes/xlsx processa planilha Excel', async () => {
   }
 });
 
+test('POST /api/importacao/clientes/xlsx rejeita arquivo sem assinatura Office', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/api/importacao/clientes/xlsx`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      },
+      body: Buffer.from('nao e um xlsx')
+    });
+
+    assert.equal(response.status, 400);
+    const body = await response.json();
+    assert.match(body.erro, /assinatura/i);
+  } finally {
+    server.close();
+  }
+});
+
+test('POST /api/importacao/clientes não processa novamente o mesmo hash', async () => {
+  const { server, port } = await startTestServer();
+
+  try {
+    const csv = [
+      'NUMERO_EMPRESA,NOME,CNPJ,CNAE,UF,CIDADE',
+      '3003,Empresa Idempotente,11223344000100,6201501,SC,Florianópolis'
+    ].join('\n');
+    const headers = { 'Content-Type': 'text/csv' };
+
+    const primeira = await fetch(`http://127.0.0.1:${port}/api/importacao/clientes`, {
+      method: 'POST',
+      headers,
+      body: csv
+    });
+    assert.equal(primeira.status, 201);
+
+    const segunda = await fetch(`http://127.0.0.1:${port}/api/importacao/clientes`, {
+      method: 'POST',
+      headers,
+      body: csv
+    });
+    assert.equal(segunda.status, 200);
+    const body = await segunda.json();
+    assert.equal(body.duplicado, true);
+    assert.match(body.aviso, /já importado/i);
+  } finally {
+    server.close();
+  }
+});
+
 test('GET /api/modulo-dp/dashboard/resumo entrega resumo operacional do cenário atual', async () => {
   const { server, port } = await startTestServer();
 

@@ -1,5 +1,7 @@
+import crypto from 'node:crypto';
 import { parse } from 'csv-parse/sync';
 import ExcelJS from 'exceljs';
+import { Prisma } from '@prisma/client';
 import { prisma } from '../db';
 
 export type RegistroClienteImportado = {
@@ -7,6 +9,25 @@ export type RegistroClienteImportado = {
 };
 
 const COLUNAS_REQUERIDAS = ['NUMERO_EMPRESA', 'NOME', 'CNPJ', 'CNAE', 'UF', 'CIDADE'] as const;
+const XLSX_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04]);
+
+function calcularHash(arquivo: Buffer): string {
+  return crypto.createHash('sha256').update(arquivo).digest('hex');
+}
+
+function validarMagicBytesXlsx(arquivo: Buffer): void {
+  if (arquivo.length < XLSX_MAGIC.length || !arquivo.subarray(0, XLSX_MAGIC.length).equals(XLSX_MAGIC)) {
+    throw new Error('Arquivo XLSX rejeitado: assinatura PK\\x03\\x04 não encontrada.');
+  }
+}
+
+function validarBytesCsv(csvTexto: string): Buffer {
+  const arquivo = Buffer.from(csvTexto, 'utf8');
+  if (arquivo.includes(0)) {
+    throw new Error('Arquivo CSV rejeitado: conteúdo binário detectado.');
+  }
+  return arquivo;
+}
 
 function limparTexto(valor: unknown): string {
   return String(valor ?? '').trim();
@@ -140,7 +161,7 @@ function validarLinha(registro: Record<string, string>): { valido: boolean; mens
   };
 }
 
-export async function importarClientesCsv(csvTexto: string, nomeArquivo = 'clientes.csv') {
+export async function importarClientesCsv(csvTexto: string, nomeArquivo = 'clientes.csv', hashArquivo = calcularHash(validarBytesCsv(csvTexto))) {
   const registros = parseCsv(csvTexto);
 
   if (registros.length === 0) {
@@ -156,92 +177,115 @@ export async function importarClientesCsv(csvTexto: string, nomeArquivo = 'clien
     throw new Error(`CSV sem colunas obrigatórias: ${faltantes.join(', ')}`);
   }
 
-  const lote = await prisma.importacaoLote.create({
-    data: {
-      nomeArquivo,
-      tipo: 'CLIENTES',
-      status: 'PROCESSANDO',
-      totalLinhas: registros.length,
-      processadas: 0,
-      invalidas: 0
-    }
+  const existente = await prisma.importacaoLote.findFirst({
+    where: { tipo: 'CLIENTES', hashArquivo },
+    select: { id: true, status: true, nomeArquivo: true, processadas: true, invalidas: true, totalLinhas: true }
   });
+  if (existente) {
+    return {
+      duplicado: true,
+      aviso: 'Arquivo já importado anteriormente; nenhum dado foi processado novamente.',
+      loteId: existente.id,
+      status: existente.status,
+      totalLinhas: existente.totalLinhas,
+      processadas: existente.processadas,
+      invalidas: existente.invalidas,
+      nomeArquivo: existente.nomeArquivo,
+      hashArquivo
+    };
+  }
 
-  let processadas = 0;
-  let invalidas = 0;
+  const loteAtualizado = await prisma.$transaction(async tx => {
+    const lote = await tx.importacaoLote.create({
+      data: {
+        nomeArquivo,
+        hashArquivo,
+        tipo: 'CLIENTES',
+        status: 'PROCESSANDO',
+        totalLinhas: registros.length,
+        processadas: 0,
+        invalidas: 0
+      }
+    });
 
-  for (let indice = 0; indice < registros.length; indice += 1) {
-    const linha = registros[indice];
-    const validacao = validarLinha(linha);
-    const numeroLinha = indice + 2;
+    let processadas = 0;
+    let invalidas = 0;
 
-    if (!validacao.valido) {
-      invalidas += 1;
-      await prisma.importacaoLinha.create({
+    for (let indice = 0; indice < registros.length; indice += 1) {
+      const linha = registros[indice];
+      const validacao = validarLinha(linha);
+      const numeroLinha = indice + 2;
+
+      if (!validacao.valido) {
+        invalidas += 1;
+        await tx.importacaoLinha.create({
+          data: {
+            loteId: lote.id,
+            numeroLinha,
+            status: 'INVALIDA',
+            mensagem: validacao.mensagem,
+            dadosJson: JSON.stringify(validacao.dados)
+          }
+        });
+        continue;
+      }
+
+      const dados = validacao.dados;
+      const cliente = await tx.cliente.upsert({
+        where: { cnpj: dados.CNPJ },
+        update: {
+          codigoErp: dados.NUMERO_EMPRESA || undefined,
+          razaoSocial: dados.NOME,
+          cnaePrincipal: dados.CNAE,
+          uf: dados.UF,
+          cidade: dados.CIDADE,
+          descricaoCnae: ''
+        },
+        create: {
+          cnpj: dados.CNPJ,
+          codigoErp: dados.NUMERO_EMPRESA || null,
+          razaoSocial: dados.NOME,
+          cnaePrincipal: dados.CNAE,
+          descricaoCnae: '',
+          uf: dados.UF,
+          cidade: dados.CIDADE
+        }
+      });
+
+      processadas += 1;
+      await tx.importacaoLinha.create({
         data: {
           loteId: lote.id,
           numeroLinha,
-          status: 'INVALIDA',
-          mensagem: validacao.mensagem,
-          dadosJson: JSON.stringify(validacao.dados)
+          status: 'PROCESSADA',
+          mensagem: 'Cliente validado e persistido.',
+          dadosJson: JSON.stringify(dados),
+          clienteId: cliente.id
         }
       });
-      continue;
     }
 
-    const dados = validacao.dados;
-    const cliente = await prisma.cliente.upsert({
-      where: { cnpj: dados.CNPJ },
-      update: {
-        codigoErp: dados.NUMERO_EMPRESA || undefined,
-        razaoSocial: dados.NOME,
-        cnaePrincipal: dados.CNAE,
-        uf: dados.UF,
-        cidade: dados.CIDADE,
-        descricaoCnae: ''
-      },
-      create: {
-        cnpj: dados.CNPJ,
-        codigoErp: dados.NUMERO_EMPRESA || null,
-        razaoSocial: dados.NOME,
-        cnaePrincipal: dados.CNAE,
-        descricaoCnae: '',
-        uf: dados.UF,
-        cidade: dados.CIDADE
-      }
-    });
-
-    processadas += 1;
-    await prisma.importacaoLinha.create({
+    return tx.importacaoLote.update({
+      where: { id: lote.id },
       data: {
-        loteId: lote.id,
-        numeroLinha,
-        status: 'PROCESSADA',
-        mensagem: 'Cliente validado e persistido.',
-        dadosJson: JSON.stringify(dados),
-        clienteId: cliente.id
+        status: invalidas > 0 ? 'COM_ERROS' : 'CONCLUIDO',
+        totalLinhas: registros.length,
+        processadas,
+        invalidas,
+        finalizadoEm: new Date()
       }
     });
-  }
-
-  const loteAtualizado = await prisma.importacaoLote.update({
-    where: { id: lote.id },
-    data: {
-      status: invalidas > 0 ? 'COM_ERROS' : 'CONCLUIDO',
-      totalLinhas: registros.length,
-      processadas,
-      invalidas,
-      finalizadoEm: new Date()
-    }
-  });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
 
   return {
     loteId: loteAtualizado.id,
     status: loteAtualizado.status,
     totalLinhas: registros.length,
-    processadas,
-    invalidas,
-    nomeArquivo: loteAtualizado.nomeArquivo
+    processadas: loteAtualizado.processadas,
+    invalidas: loteAtualizado.invalidas,
+    nomeArquivo: loteAtualizado.nomeArquivo,
+    hashArquivo: loteAtualizado.hashArquivo,
+    duplicado: false
   };
 }
 
@@ -249,6 +293,7 @@ export async function importarClientesXlsx(arquivo: Buffer, nomeArquivo = 'clien
   if (arquivo.length === 0) {
     throw new Error('O arquivo Excel está vazio.');
   }
+  validarMagicBytesXlsx(arquivo);
 
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(arquivo as any);
@@ -270,5 +315,5 @@ export async function importarClientesXlsx(arquivo: Buffer, nomeArquivo = 'clien
     linhas.push(valores.join(','));
   });
   const csvTexto = linhas.join('\n');
-  return importarClientesCsv(csvTexto, nomeArquivo);
+  return importarClientesCsv(csvTexto, nomeArquivo, calcularHash(arquivo));
 }

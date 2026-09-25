@@ -95,6 +95,7 @@ model Cliente {
 model ImportacaoLote {
   id              String             @id @default(uuid())
   nomeArquivo     String
+  hashArquivo     String?
   tipo            String             @default("CLIENTES")
   status          String             @default("PROCESSANDO")
   totalLinhas     Int                @default(0)
@@ -103,6 +104,8 @@ model ImportacaoLote {
   criadoEm        DateTime           @default(now())
   finalizadoEm    DateTime?
   linhas          ImportacaoLinha[]
+
+  @@unique([tipo, hashArquivo])
 }
 
 model ImportacaoLinha {

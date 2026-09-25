@@ -44,8 +44,8 @@ A API expõe endpoints para consulta de parâmetros da CCT, importação de clie
 
 Endpoints principais:
 
-- `POST /api/importacao/clientes`: importa CSV de clientes e registra lote e linhas inválidas.
-- `POST /api/importacao/clientes/xlsx`: recebe uma planilha XLSX binária, usando a primeira aba como origem dos clientes.
+- `POST /api/importacao/clientes`: importa CSV de clientes, valida conteúdo textual, calcula SHA-256 e registra lote e linhas inválidas.
+- `POST /api/importacao/clientes/xlsx`: recebe uma planilha XLSX binária, valida a assinatura `PK\\x03\\x04`, calcula SHA-256 e usa a primeira aba como origem dos clientes.
 - `GET /api/importacao/lotes/:id`: consulta o resultado detalhado de um lote.
 - `GET /api/modulo-dp/dashboard/resumo`: retorna o resumo operacional do DP.
 - `GET /api/modulo-dp/dashboard/impactos`: lista impactos de folha recentes.
@@ -53,6 +53,8 @@ Endpoints principais:
 - `GET /api/radar/sindicatos/:id/fallback`: informa o estado da descoberta por site.
 - `POST /api/radar/sindicatos/:id/fallback/cct`: captura PDF de CCT/ACT no site oficial e preserva a evidência.
 - `GET /api/modulo-dp/alertas/stream`: abre o stream SSE de alertas.
+
+As importações são idempotentes por hash do arquivo: reenviar o mesmo conteúdo retorna o lote original sem criar novas linhas. A persistência do lote, clientes e linhas ocorre em uma transação serializável; falhas durante o processamento fazem rollback da carga.
 
 ### 2. Worker em background
 O worker roda em cron às 02:00 e percorre sindicatos ativos para buscar atualizações e processar extrações.

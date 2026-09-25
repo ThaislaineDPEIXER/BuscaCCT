@@ -18,7 +18,7 @@ importacaoRoutes.post('/importacao/clientes/xlsx', express.raw({
     }
 
     const resultado = await importarClientesXlsx(req.body, 'importacao-clientes.xlsx');
-    res.status(201).json(resultado);
+    res.status(resultado.duplicado ? 200 : 201).json(resultado);
   } catch (error) {
     res.status(400).json({ erro: error instanceof Error ? error.message : String(error) });
   }
@@ -41,7 +41,7 @@ importacaoRoutes.post('/importacao/clientes', async (req, res) => {
         ].join('\n');
 
         const resultado = await importarClientesCsv(csv, 'importacao-json.csv');
-        res.status(201).json(resultado);
+        res.status(resultado.duplicado ? 200 : 201).json(resultado);
         return;
       }
 
@@ -50,7 +50,7 @@ importacaoRoutes.post('/importacao/clientes', async (req, res) => {
     }
 
     const resultado = await importarClientesCsv(textoCsv, 'importacao-clientes.csv');
-    res.status(201).json(resultado);
+    res.status(resultado.duplicado ? 200 : 201).json(resultado);
   } catch (error) {
     res.status(400).json({ erro: error instanceof Error ? error.message : String(error) });
   }
