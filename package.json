@@ -20,7 +20,10 @@
     "receita:importar": "ts-node-dev --transpile-only src/jobs/importReceita.ts"
   },
   "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/github": "5.0.3",
     "@anthropic-ai/sdk": "^0.68.0",
+    "@google/generative-ai": "^0.24.1",
     "@prisma/client": "^6.16.0",
     "axios": "^1.12.2",
     "cors": "^2.8.6",
@@ -32,22 +35,19 @@
     "helmet": "^8.3.0",
     "node-cron": "^4.2.1",
     "nodemailer": "^10.0.10",
-    "playwright": "^1.55.0"
+    "playwright": "^1.55.0",
+    "ts-node": "^10.9.2"
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"
   },
   "devDependencies": {
-    "@actions/core": "^3.0.1",
-    "@actions/github": "^9.1.1",
-    "@google/generative-ai": "^0.24.1",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.3",
     "@types/node": "^24.5.2",
     "@types/node-cron": "^3.0.11",
     "@types/nodemailer": "^6.4.17",
     "prisma": "^6.16.0",
-    "ts-node": "^10.9.2",
     "ts-node-dev": "^2.0.0",
     "typescript": "^5.9.2"
   }
