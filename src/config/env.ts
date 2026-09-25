@@ -60,11 +60,15 @@ export const env = {
   smtpPassword: process.env.SMTP_PASSWORD ?? '',
   alertEmailFrom: process.env.ALERT_EMAIL_FROM ?? '',
   alertEmailTo: process.env.ALERT_EMAIL_TO ?? '',
-  portalAuthEnabled: booleanEnv('PORTAL_AUTH_ENABLED', false),
+  portalAuthEnabled: booleanEnv('PORTAL_AUTH_ENABLED', process.env.NODE_ENV === 'production'),
   portalApiKey: process.env.PORTAL_API_KEY ?? '',
   corsOrigins: (process.env.CORS_ORIGINS ?? '*').split(',').map(value => value.trim()).filter(Boolean),
   rateLimitWindowMs: numberEnv('RATE_LIMIT_WINDOW_MS', 60_000),
   rateLimitMax: numberEnv('RATE_LIMIT_MAX', 120),
+  uploadRateLimitWindowMs: numberEnv('UPLOAD_RATE_LIMIT_WINDOW_MS', 60 * 60_000),
+  uploadRateLimitMax: numberEnv('UPLOAD_RATE_LIMIT_MAX', 20),
+  aiRateLimitWindowMs: numberEnv('AI_RATE_LIMIT_WINDOW_MS', 60_000),
+  aiRateLimitMax: numberEnv('AI_RATE_LIMIT_MAX', 30),
   tiWebhookUrl: process.env.TI_WEBHOOK_URL ?? '',
   documentStoragePath: process.env.DOCUMENT_STORAGE_PATH ?? 'storage'
 };

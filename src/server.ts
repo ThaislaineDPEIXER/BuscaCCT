@@ -10,6 +10,7 @@ import { radarRoutes } from './routes/radarRoutes';
 import { alertRoutes } from './routes/alertRoutes';
 import { moduloDpRoutes } from './routes/moduloDpRoutes';
 import { importacaoRoutes } from './routes/importacaoRoutes';
+import { verificarReadiness } from './services/readiness';
 
 export function createApp() {
   const app = express();
@@ -39,6 +40,21 @@ export function createApp() {
     message: { erro: 'Muitas requisições em pouco tempo. Tente novamente mais tarde.' }
   }));
 
+  const uploadRateLimit = rateLimit({
+    windowMs: env.uploadRateLimitWindowMs,
+    max: env.uploadRateLimitMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { erro: 'Limite de importações atingido. Tente novamente mais tarde.' }
+  });
+  const aiRateLimit = rateLimit({
+    windowMs: env.aiRateLimitWindowMs,
+    max: env.aiRateLimitMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { erro: 'Limite de consultas inteligentes atingido. Tente novamente mais tarde.' }
+  });
+
   app.use(express.text({ type: ['text/csv', 'application/csv'] }));
   app.use(express.json({ limit: '2mb' }));
   app.use(attachRequestAudit);
@@ -47,11 +63,20 @@ export function createApp() {
     throw new Error('PORTAL_AUTH_ENABLED=true exige PORTAL_API_KEY configurada.');
   }
 
+  app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+  app.get('/readiness', async (_req, res) => {
+    const resultado = await verificarReadiness();
+    res.status(resultado.status === 'ok' ? 200 : 503).json(resultado);
+  });
+
   if (env.portalAuthEnabled) {
     app.use(requirePortalApiKey(env.portalApiKey));
   }
 
-  app.get('/health', (_req, res) => res.json({ status: 'ok' }));
+  app.use('/api/clientes/sugerir', aiRateLimit);
+  app.use('/api/modulo-dp/consultar', aiRateLimit);
+  app.use('/api/modulo-dp/parametros-cct', aiRateLimit);
+  app.use('/api/importacao', uploadRateLimit);
   app.use('/api', enquadramentoRoutes);
   app.use('/api', alertRoutes);
   app.use('/api', importacaoRoutes);

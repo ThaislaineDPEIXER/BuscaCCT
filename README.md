@@ -53,6 +53,8 @@ Endpoints principais:
 - `GET /api/radar/sindicatos/:id/fallback`: informa o estado da descoberta por site.
 - `POST /api/radar/sindicatos/:id/fallback/cct`: captura PDF de CCT/ACT no site oficial e preserva a evidência.
 - `GET /api/modulo-dp/alertas/stream`: abre o stream SSE de alertas.
+- `GET /health`: liveness público para reinício do processo.
+- `GET /readiness`: verifica PostgreSQL e autenticação da API Anthropic antes de aceitar tráfego.
 
 As importações são idempotentes por hash do arquivo: reenviar o mesmo conteúdo retorna o lote original sem criar novas linhas. A persistência do lote, clientes e linhas ocorre em uma transação serializável; falhas durante o processamento fazem rollback da carga.
 
@@ -61,6 +63,8 @@ PDFs capturados pelo MTE ou pelo fallback sindical são gravados em `DOCUMENT_ST
 Após a transcrição, `src/services/claudeAgent.ts` valida um contrato JSON estrito com `impactos_folha` e `contribuicoes_sindicais`. O serviço `src/services/cctExtractionPersistence.ts` grava esses itens em `ImpactoFolha` e `ContribuicaoSindical` dentro de uma transação serializável, preservando evidências textuais e registros já validados pelo DP. O módulo `src/services/cctOcr.ts` permanece responsável exclusivamente pela transcrição de PDFs.
 
 O worker usa locks distribuídos em PostgreSQL por CNPJ (`WORKER_LOCK_TTL_MS`). Falhas do MTE não bloqueiam a fila: cada sindicato registra `proximaTentativa` e `falhasConsecutivas`, com backoff exponencial entre `MTE_RETRY_BASE_DELAY_MS` e `MTE_RETRY_MAX_DELAY_MS`.
+
+Em produção, `PORTAL_AUTH_ENABLED=true` exige `x-api-key` ou `Authorization: Bearer` nas rotas de negócio. Uploads e consultas que usam IA possuem rate limits próprios; o SSE envia heartbeats e remove o listener quando a conexão é encerrada.
 
 ### 2. Worker em background
 O worker roda em cron às 02:00 e percorre sindicatos ativos para buscar atualizações e processar extrações.

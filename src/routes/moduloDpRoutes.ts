@@ -93,10 +93,24 @@ function abrirStreamAlertas(req: import('express').Request, res: import('express
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
   res.write(': connected\n\n');
-  const cancelar = assinarAlertas(alerta => res.write(`data: ${JSON.stringify(alerta)}\n\n`));
-  req.on('close', cancelar);
+  let encerrado = false;
+  const cancelar = assinarAlertas(alerta => {
+    if (!encerrado && !res.writableEnded) res.write(`event: alerta\ndata: ${JSON.stringify(alerta)}\n\n`);
+  });
+  const heartbeat = setInterval(() => {
+    if (!encerrado && !res.writableEnded) res.write(': keep-alive\n\n');
+  }, 25_000);
+  const limpar = () => {
+    if (encerrado) return;
+    encerrado = true;
+    clearInterval(heartbeat);
+    cancelar();
+  };
+  req.once('close', limpar);
+  res.once('close', limpar);
 }
 
 moduloDpRoutes.get('/alertas/stream', abrirStreamAlertas);
