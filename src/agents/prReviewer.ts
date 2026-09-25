@@ -90,7 +90,7 @@ async function postReviewComment(token: string, owner: string, repo: string, pul
 }
 
 async function main(): Promise<void> {
-  if (github.context.eventName !== 'pull_request') {
+  if (!['pull_request', 'pull_request_target'].includes(github.context.eventName)) {
     core.info('Evento atual não é pull_request; encerrando agente.');
     return;
   }

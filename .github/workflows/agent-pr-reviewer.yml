@@ -30,8 +30,11 @@ jobs:
       - name: Install project dependencies
         run: npm ci --ignore-scripts
 
+      - name: Build project
+        run: npm run build
+
       - name: Run PR reviewer agent
         env:
           GITHUB_TOKEN: ${{ github.token }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: npx ts-node src/agents/prReviewer.ts
+        run: node dist/agents/prReviewer.js
