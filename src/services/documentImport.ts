@@ -1,3 +1,4 @@
+import * as XLS from '@e965/xlsx';
 import {
   EMPRESA_HEADERS,
   SINDICATO_HEADERS,
@@ -38,6 +39,62 @@ export type LinhasImportacao = {
   rejeitadas: string[];
   duplicadas: number;
 };
+
+function normalizarCabecalho(valor: string): string {
+  return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
+const COLUNAS_SINDICATO: Record<string, string[]> = {
+  CNPJ: ['cnpj', 'cnpj sindicato', 'cnpj do sindicato', 'cnpj da entidade'],
+  'Nome do Sindicato': ['nome do sindicato', 'nome sindicato', 'razao social', 'nome', 'nome da entidade', 'entidade sindical'],
+  UF: ['uf', 'estado', 'sigla uf'],
+  'Município': ['municipio', 'cidade'],
+  Categoria: ['categoria', 'segmento'],
+  'Código Sindical': ['codigo sindical'],
+  'Base Territorial': ['base territorial'],
+  'Status de Monitorização': ['status de monitorizacao', 'status']
+};
+
+export function lerCadastroSindicalExcel(
+  arquivo: Buffer,
+  existentes: { empresas: Set<string>; sindicatos: Set<string> },
+  origem: string
+): LinhasImportacao {
+  const workbook = XLS.read(arquivo, { type: 'buffer', cellDates: false });
+  for (const nome of workbook.SheetNames) {
+    const aba = workbook.Sheets[nome];
+    if (aba['!ref'] && XLS.utils.decode_range(aba['!ref']).e.r >= 50_000) {
+      throw new Error(`${origem}: aba "${nome}" excede 50.000 linhas; divida o arquivo antes de importar.`);
+    }
+    const valores = XLS.utils.sheet_to_json<(string | number)[]>(aba, { header: 1, raw: false, defval: '' });
+    const indice = valores.findIndex(linha => {
+      const nomes = new Set(linha.map(celula => normalizarCabecalho(String(celula))));
+      return ['CNPJ', 'Nome do Sindicato', 'UF'].every(campo => COLUNAS_SINDICATO[campo].some(alias => nomes.has(alias)));
+    });
+    if (indice < 0) continue;
+    const cabecalho = valores[indice].map(celula => normalizarCabecalho(String(celula)));
+    const colunas = SINDICATO_HEADERS.map(header => cabecalho.findIndex(celula => COLUNAS_SINDICATO[header]?.includes(celula)));
+    const linhas = valores.slice(indice + 1).map(linha => colunas.map(coluna => coluna < 0 ? '' : String(linha[coluna] ?? '')));
+    if (linhas.length === 0) throw new Error(`${origem}: a planilha não contém cadastros abaixo do cabeçalho.`);
+    const resultado = montarLinhasImportacao({ empresas: [], sindicatos: [] }, existentes, origem);
+    const validacao = sanitizarSindicatos([SINDICATO_HEADERS.slice(), ...linhas], origem);
+    resultado.rejeitadas.push(...validacao.rejeitadas.map(item => `${origem}: item ${item.linha + indice} rejeitado (${item.motivo})`));
+    const vistos = new Set(existentes.sindicatos);
+    for (const sindicato of validacao.registros) {
+      if (vistos.has(sindicato.cnpj)) {
+        resultado.duplicadas++;
+      } else {
+        vistos.add(sindicato.cnpj);
+        resultado.sindicatos.push(linhaSindicato(sindicato));
+      }
+    }
+    if (resultado.sindicatos.length === 0 && resultado.duplicadas === 0) {
+      throw new Error(`${origem}: nenhum sindicato válido encontrado. ${resultado.rejeitadas.slice(0, 3).join('; ')}`);
+    }
+    return resultado;
+  }
+  throw new Error(`${origem}: nenhuma aba possui as colunas CNPJ, Nome do Sindicato e UF.`);
+}
 
 export const SYSTEM_PROMPT_CADASTROS = `Você extrai dados cadastrais de documentos brasileiros (cartão CNPJ, contrato social, listas de clientes, cadastros sindicais, CCTs).
 Retorne ÚNICA e EXCLUSIVAMENTE um objeto JSON válido, sem Markdown, neste formato:
@@ -99,7 +156,7 @@ function linhaSindicato(sindicato: SindicatoPlanilha): string[] {
     Categoria: sindicato.segmento ?? '',
     'Código Sindical': sindicato.codigoSindical ?? '',
     'Base Territorial': sindicato.baseTerritorial.join(', '),
-    'Status de Monitorização': 'ATIVO'
+    'Status de Monitorização': sindicato.ativo ? 'ATIVO' : 'INATIVO'
   };
   return SINDICATO_HEADERS.map(header => valores[header]);
 }

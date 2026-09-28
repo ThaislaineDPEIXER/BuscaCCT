@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as XLS from '@e965/xlsx';
 
 import { EMPRESA_HEADERS, SINDICATO_HEADERS } from '../src/services/adminSheetParser';
 import { mimeSuportado } from '../src/services/aiDocumentReader';
-import { interpretarExtracao, montarLinhasImportacao } from '../src/services/documentImport';
+import { interpretarExtracao, montarLinhasImportacao, lerCadastroSindicalExcel } from '../src/services/documentImport';
 
 const coluna = (header: typeof EMPRESA_HEADERS[number]) => EMPRESA_HEADERS.indexOf(header);
 
@@ -51,4 +52,27 @@ test('mimeSuportado aceita PDF e imagens e recusa outros formatos', () => {
   assert.equal(mimeSuportado('image/jpeg'), true);
   assert.equal(mimeSuportado('application/vnd.google-apps.document'), false);
   assert.equal(mimeSuportado(undefined), false);
+});
+
+test('lerCadastroSindicalExcel preserva linhas de cadastro e deduplica sem criar vinculos', () => {
+  const workbook = XLS.utils.book_new();
+  XLS.utils.book_append_sheet(workbook, XLS.utils.aoa_to_sheet([
+    ['Relatório de entidades'],
+    ['Razão Social', 'UF', 'CNPJ', 'Base Territorial', 'Status'],
+    ['Sindicato do Comércio', 'SC', '11.222.333/0001-81', 'Penha, Itajaí', 'INATIVO'],
+    ['Repetido', 'SC', '11.222.333/0001-81'],
+    ['Sem CNPJ', 'SC', '']
+  ]), 'Sindicatos');
+  for (const [formato, extensao] of [['biff8', 'xls'], ['xlsx', 'xlsx']] as const) {
+    const planilha = XLS.write(workbook, { bookType: formato, type: 'buffer' });
+    const linhas = lerCadastroSindicalExcel(planilha, { empresas: new Set(), sindicatos: new Set() }, `sindicatos.${extensao}`);
+    assert.deepEqual(linhas.empresas, []);
+    assert.equal(linhas.sindicatos.length, 1);
+    assert.equal(linhas.sindicatos[0][0], '11222333000181');
+    assert.equal(linhas.sindicatos[0][SINDICATO_HEADERS.indexOf('Base Territorial')], 'Penha, Itajaí');
+    assert.equal(linhas.sindicatos[0][SINDICATO_HEADERS.indexOf('Status de Monitorização')], 'INATIVO');
+    assert.equal(linhas.duplicadas, 1);
+    assert.match(linhas.rejeitadas[0], /item 5 rejeitado/);
+  }
+  assert.throws(() => lerCadastroSindicalExcel(Buffer.from('invalido'), { empresas: new Set(), sindicatos: new Set() }, 'outro.xls'), /nenhuma aba possui/);
 });

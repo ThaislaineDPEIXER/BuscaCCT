@@ -1,7 +1,7 @@
 import { env } from '../config/env';
 import { prisma } from '../db';
 import { mimeSuportado } from '../services/aiDocumentReader';
-import { extrairCadastrosDeDocumento, montarLinhasImportacao } from '../services/documentImport';
+import { extrairCadastrosDeDocumento, lerCadastroSindicalExcel, montarLinhasImportacao } from '../services/documentImport';
 import {
   appendAdminRows,
   baixarArquivoDrive,
@@ -45,15 +45,20 @@ export async function importarDocumentosDoDrive(): Promise<ResumoImportacaoDocum
 
   for (const documento of pendentes) {
     try {
-      if (!mimeSuportado(documento.mimeType)) {
-        throw new Error(`Tipo de arquivo não suportado (${documento.mimeType || 'desconhecido'}). Use PDF, PNG, JPEG ou WEBP.`);
-      }
+      const excel = ['application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'].includes(documento.mimeType);
       if (documento.tamanho > TAMANHO_MAXIMO_BYTES) {
         throw new Error(`Arquivo acima de ${TAMANHO_MAXIMO_BYTES / 1024 / 1024} MB.`);
       }
 
-      const extracao = await extrairCadastrosDeDocumento(await baixarArquivoDrive(documento.id), documento.mimeType);
-      const linhas = montarLinhasImportacao(extracao, existentes, documento.nome);
+      if (!excel && !mimeSuportado(documento.mimeType)) {
+        throw new Error(`Tipo de arquivo não suportado (${documento.mimeType || 'desconhecido'}). Use XLS, XLSX, PDF, PNG, JPEG ou WEBP.`);
+      }
+      const arquivo = await baixarArquivoDrive(documento.id);
+      const linhas = excel ? lerCadastroSindicalExcel(arquivo, existentes, documento.nome)
+        : mimeSuportado(documento.mimeType)
+          ? montarLinhasImportacao(await extrairCadastrosDeDocumento(arquivo, documento.mimeType), existentes, documento.nome)
+          : undefined;
+      if (!linhas) throw new Error(`Tipo de arquivo não suportado (${documento.mimeType}).`);
       await appendAdminRows(env.googleSheetId, 'sindicatos', linhas.sindicatos);
       await appendAdminRows(env.googleSheetId, 'cadastro', linhas.empresas);
       for (const linha of linhas.sindicatos) existentes.sindicatos.add(linha[0]);
