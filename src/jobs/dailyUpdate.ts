@@ -9,7 +9,7 @@ import { notificarFalhaMte } from '../services/operationalAlert';
 import { varrerSindicato } from '../services/radarDiscovery';
 import { adquirirWorkerLock } from '../services/workerLock';
 import { resolveStoredDocumentPath } from '../services/documentStorage';
-import { appendRowToSheet, uploadPdfToDrive } from '../services/googleWorkspace';
+import { appendRowToSheet, setupSheetFormatting, uploadPdfToDrive } from '../services/googleWorkspace';
 import { buscarESalvarCCT } from '../tools/mteScraper';
 
 const pausar = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -50,9 +50,14 @@ async function publicarCctNoWorkspace(cnpjSindicato: string, anoVigencia: number
   await appendRowToSheet(env.googleSheetId, [
     new Date().toISOString(),
     sindicatoNome,
-    cct.resumoCct ?? 'Resumo indisponivel.',
-    linkPdf
+    linkPdf,
+    cct.resumoCct ?? 'Resumo indisponivel.'
   ]);
+  try {
+    await setupSheetFormatting(env.googleSheetId);
+  } catch (error) {
+    console.warn('[WORKSPACE] CCT publicada, mas o painel do Sheets não pôde ser formatado:', error);
+  }
 }
 
 async function selecionarFila() {
