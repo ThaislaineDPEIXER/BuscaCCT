@@ -6,10 +6,13 @@ const WORKSPACE_SCOPES = [
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/spreadsheets'
 ];
-const DASHBOARD_SHEET_TITLE = 'CCTs';
-const DASHBOARD_HEADERS = ['Data', 'Sindicato', 'Link do Drive', 'Resumo da IA'];
+const DASHBOARD_SHEET_TITLE = 'CCTs Extraídas';
+const DASHBOARD_HEADERS = ['Data', 'Sindicato/CNPJ', 'Link Drive', 'Resumo'];
+const REGISTRY_SHEET_TITLE = 'Cadastro de Sindicatos';
+const REGISTRY_HEADERS = ['CNPJ', 'Nome do Sindicato', 'UF', 'Categoria', 'Status de Monitorização'];
 
 type DashboardSheet = { sheetId: number; title: string };
+type AdminSheetStructure = { extracted: DashboardSheet; registry: DashboardSheet };
 
 function createAuth() {
   return new google.auth.JWT({
@@ -66,65 +69,115 @@ export function dashboardNeedsHeaders(values: string[][] | undefined): boolean {
   return !values?.[0]?.some(value => value.trim());
 }
 
-export async function ensureCctDashboard(sheetId: string): Promise<DashboardSheet> {
+function columnLetter(count: number): string {
+  return String.fromCharCode('A'.charCodeAt(0) + count - 1);
+}
+
+function headerFormatRequests(sheetId: number): sheets_v4.Schema$Request[] {
+  return [
+    {
+      updateSheetProperties: {
+        properties: { sheetId, gridProperties: { frozenRowCount: 1 } },
+        fields: 'gridProperties.frozenRowCount'
+      }
+    },
+    {
+      repeatCell: {
+        range: { sheetId, startRowIndex: 0, endRowIndex: 1 },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 0.25, green: 0.25, blue: 0.25 },
+            textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } }
+          }
+        },
+        fields: 'userEnteredFormat(backgroundColor,textFormat)'
+      }
+    }
+  ];
+}
+
+export async function ensureAdminSheetStructure(sheetId: string): Promise<AdminSheetStructure> {
   const sheets = google.sheets({ version: 'v4', auth: createAuth() });
+  const layout = [
+    { title: DASHBOARD_SHEET_TITLE, headers: DASHBOARD_HEADERS },
+    { title: REGISTRY_SHEET_TITLE, headers: REGISTRY_HEADERS }
+  ];
 
   try {
     const spreadsheet = await sheets.spreadsheets.get({
       spreadsheetId: sheetId,
-      fields: 'sheets(properties(sheetId,title),conditionalFormats)'
+      fields: 'sheets(properties(sheetId,title))'
     });
-    let dashboard = spreadsheet.data.sheets?.find(sheet => sheet.properties?.title === DASHBOARD_SHEET_TITLE);
+    const ids = new Map<string, number>();
+    for (const sheet of spreadsheet.data.sheets ?? []) {
+      const { title, sheetId: id } = sheet.properties ?? {};
+      if (typeof title === 'string' && typeof id === 'number') ids.set(title, id);
+    }
 
-    if (!dashboard?.properties?.sheetId) {
+    const missing = layout.filter(({ title }) => !ids.has(title));
+    if (missing.length > 0) {
       const created = await sheets.spreadsheets.batchUpdate({
         spreadsheetId: sheetId,
-        requestBody: { requests: [{ addSheet: { properties: { title: DASHBOARD_SHEET_TITLE } } }] }
+        requestBody: { requests: missing.map(({ title }) => ({ addSheet: { properties: { title } } })) }
       });
-      dashboard = created.data.replies?.[0]?.addSheet;
-    }
-
-    if (!dashboard) {
-      throw new Error('Não foi possível localizar ou criar a aba CCTs.');
-    }
-    const dashboardSheetId = dashboard.properties?.sheetId;
-    const dashboardTitle = dashboard.properties?.title;
-    if (typeof dashboardSheetId !== 'number' || typeof dashboardTitle !== 'string' || !dashboardTitle) {
-      throw new Error('A aba CCTs não possui identificação válida.');
-    }
-
-    const headerRange = `'${dashboardTitle}'!A1:D1`;
-    const headers = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: headerRange });
-    if (dashboardNeedsHeaders(headers.data.values ?? undefined)) {
-      await sheets.spreadsheets.values.update({
-        spreadsheetId: sheetId,
-        range: headerRange,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: { values: [DASHBOARD_HEADERS] }
-      });
-    }
-
-    const existingRules = dashboard.conditionalFormats ?? [];
-    const requests: sheets_v4.Schema$Request[] = [
-      {
-        updateSheetProperties: {
-          properties: { sheetId: dashboardSheetId, gridProperties: { frozenRowCount: 1 } },
-          fields: 'gridProperties.frozenRowCount'
-        }
-      },
-      {
-        repeatCell: {
-          range: { sheetId: dashboardSheetId, startRowIndex: 0, endRowIndex: 1 },
-          cell: {
-            userEnteredFormat: {
-              backgroundColor: { red: 0.25, green: 0.25, blue: 0.25 },
-              textFormat: { bold: true, foregroundColor: { red: 1, green: 1, blue: 1 } }
-            }
-          },
-          fields: 'userEnteredFormat(backgroundColor,textFormat)'
-        }
+      for (const reply of created.data.replies ?? []) {
+        const { title, sheetId: id } = reply.addSheet?.properties ?? {};
+        if (typeof title === 'string' && typeof id === 'number') ids.set(title, id);
       }
-    ];
+      console.info(`[WORKSPACE] Abas criadas: ${missing.map(({ title }) => title).join(', ')}.`);
+    }
+
+    const resolved = layout.map(({ title, headers }) => {
+      const id = ids.get(title);
+      if (id === undefined) throw new Error(`Não foi possível localizar ou criar a aba ${title}.`);
+      return { sheetId: id, title, headers, range: `'${title}'!A1:${columnLetter(headers.length)}1` };
+    });
+
+    const current = await sheets.spreadsheets.values.batchGet({
+      spreadsheetId: sheetId,
+      ranges: resolved.map(({ range }) => range)
+    });
+    const pendingHeaders = resolved.filter((_, index) => dashboardNeedsHeaders(current.data.valueRanges?.[index]?.values ?? undefined));
+    if (pendingHeaders.length > 0) {
+      await sheets.spreadsheets.values.batchUpdate({
+        spreadsheetId: sheetId,
+        requestBody: {
+          valueInputOption: 'USER_ENTERED',
+          data: pendingHeaders.map(({ range, headers }) => ({ range, values: [headers] }))
+        }
+      });
+    }
+
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: { requests: resolved.flatMap(({ sheetId: id }) => headerFormatRequests(id)) }
+    });
+
+    const [extracted, registry] = resolved;
+    return {
+      extracted: { sheetId: extracted.sheetId, title: extracted.title },
+      registry: { sheetId: registry.sheetId, title: registry.title }
+    };
+  } catch (error) {
+    console.error('[WORKSPACE] Falha ao preparar a estrutura da planilha:', error);
+    throw error;
+  }
+}
+
+export async function ensureCctDashboard(sheetId: string): Promise<DashboardSheet> {
+  const sheets = google.sheets({ version: 'v4', auth: createAuth() });
+
+  try {
+    const { extracted } = await ensureAdminSheetStructure(sheetId);
+    const dashboardSheetId = extracted.sheetId;
+    const spreadsheet = await sheets.spreadsheets.get({
+      spreadsheetId: sheetId,
+      fields: 'sheets(properties(sheetId),conditionalFormats)'
+    });
+    const existingRules = spreadsheet.data.sheets
+      ?.find(sheet => sheet.properties?.sheetId === dashboardSheetId)
+      ?.conditionalFormats ?? [];
+    const requests: sheets_v4.Schema$Request[] = [];
 
     if (!existingRules.some(rule => hasConditionalRule(rule, 'Aumento') || hasConditionalRule(rule, 'Alerta'))) {
       requests.push({
@@ -156,12 +209,14 @@ export async function ensureCctDashboard(sheetId: string): Promise<DashboardShee
       });
     }
 
-    await sheets.spreadsheets.batchUpdate({
-      spreadsheetId: sheetId,
-      requestBody: { requests }
-    });
+    if (requests.length > 0) {
+      await sheets.spreadsheets.batchUpdate({
+        spreadsheetId: sheetId,
+        requestBody: { requests }
+      });
+    }
     console.info('[WORKSPACE] Formatação do painel Google Sheets aplicada.');
-    return { sheetId: dashboardSheetId, title: dashboardTitle };
+    return extracted;
   } catch (error) {
     console.error('[WORKSPACE] Falha ao configurar a formatação do Google Sheets:', error);
     throw error;

@@ -20,7 +20,8 @@
     "db:seed": "prisma db seed",
     "test": "DATABASE_URL=${TEST_DATABASE_URL:-postgresql://radar:change-me@127.0.0.1:55432/radar_sindical} DIRECT_URL=${TEST_DATABASE_URL:-postgresql://radar:change-me@127.0.0.1:55432/radar_sindical} ANTHROPIC_API_KEY=test-key PORTAL_AUTH_ENABLED=false npx prisma migrate deploy && DATABASE_URL=${TEST_DATABASE_URL:-postgresql://radar:change-me@127.0.0.1:55432/radar_sindical} DIRECT_URL=${TEST_DATABASE_URL:-postgresql://radar:change-me@127.0.0.1:55432/radar_sindical} ANTHROPIC_API_KEY=test-key PORTAL_AUTH_ENABLED=false node --test --require ts-node/register tests/*.test.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "receita:importar": "ts-node-dev --transpile-only src/jobs/importReceita.ts"
+    "receita:importar": "ts-node-dev --transpile-only src/jobs/importReceita.ts",
+    "sindicato:registrar": "ts-node --transpile-only src/jobs/registerUnion.ts"
   },
   "dependencies": {
     "@actions/core": "^1.11.1",
