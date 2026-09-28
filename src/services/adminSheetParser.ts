@@ -44,6 +44,22 @@ function normalizarTexto(valor: string): string {
   return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
 }
 
+// Mantém as colunas da equipe e só acrescenta ao fim as esperadas que faltam; null = nada a fazer.
+export function completarCabecalho(atual: string[], esperado: readonly string[]): string[] | null {
+  const preenchido = atual.map(valor => String(valor ?? '').trim());
+  while (preenchido.length > 0 && !preenchido[preenchido.length - 1]) preenchido.pop();
+  const presentes = new Set(preenchido.map(normalizarTexto));
+  const faltantes = esperado.filter(header => !presentes.has(normalizarTexto(header)));
+  if (preenchido.length > 0 && faltantes.length === 0) return null;
+  return [...preenchido, ...faltantes];
+}
+
+export function alinharAoCabecalho(linhas: string[][], esperado: readonly string[], cabecalhoReal: string[]): string[][] {
+  const origem = new Map(esperado.map((header, index) => [normalizarTexto(header), index]));
+  const destino = cabecalhoReal.map(header => origem.get(normalizarTexto(String(header ?? ''))));
+  return linhas.map(linha => destino.map(index => (index === undefined ? '' : linha[index] ?? '')));
+}
+
 function somenteDigitos(valor: string): string {
   return valor.replace(/\D/g, '');
 }

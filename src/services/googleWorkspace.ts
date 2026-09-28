@@ -5,6 +5,8 @@ import { env } from '../config/env';
 import {
   EMPRESA_HEADERS,
   SINDICATO_HEADERS,
+  alinharAoCabecalho,
+  completarCabecalho,
   sanitizarEmpresas,
   sanitizarSindicatos,
   type EmpresaPlanilha,
@@ -159,13 +161,17 @@ export async function marcarDocumento(fileId: string, status: StatusImportacao, 
 
 export async function appendAdminRows(sheetId: string, aba: 'cadastro' | 'sindicatos', rows: string[][]): Promise<void> {
   if (rows.length === 0) return;
+  const sheets = sheetsClient();
   const estrutura = await ensureAdminSheetStructure(sheetId);
-  await sheetsClient().spreadsheets.values.append({
+  const { title } = estrutura[aba];
+  const cabecalho = await sheets.spreadsheets.values.get({ spreadsheetId: sheetId, range: `'${title}'!1:1` });
+  const cabecalhoReal = (cabecalho.data.values?.[0] ?? []).map(valor => String(valor ?? ''));
+  await sheets.spreadsheets.values.append({
     spreadsheetId: sheetId,
-    range: `'${estrutura[aba].title}'!A:${columnLetter(SHEET_LAYOUT[aba].headers.length)}`,
+    range: `'${title}'!A:${columnLetter(cabecalhoReal.length)}`,
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
-    requestBody: { values: rows }
+    requestBody: { values: alinharAoCabecalho(rows, SHEET_LAYOUT[aba].headers, cabecalhoReal) }
   });
 }
 
@@ -285,21 +291,29 @@ export async function ensureAdminSheetStructure(sheetId: string): Promise<AdminS
     const resolved = layout.map(({ key, title, headers }) => {
       const id = ids.get(title);
       if (id === undefined) throw new Error(`Não foi possível localizar ou criar a aba ${title}.`);
-      return { key, sheetId: id, title, headers: [...headers], range: `'${title}'!A1:${columnLetter(headers.length)}1` };
+      return { key, sheetId: id, title, headers: [...headers] as string[], range: `'${title}'!1:1` };
     });
 
     const current = await sheets.spreadsheets.values.batchGet({
       spreadsheetId: sheetId,
       ranges: resolved.map(({ range }) => range)
     });
-    const pendingHeaders = resolved.filter((_, index) => dashboardNeedsHeaders(current.data.valueRanges?.[index]?.values ?? undefined));
+    const pendingHeaders = resolved.flatMap(({ key, title, headers }, index) => {
+      const atual = (current.data.valueRanges?.[index]?.values?.[0] ?? []).map(valor => String(valor ?? ''));
+      if (key === 'cadastro' || key === 'sindicatos') {
+        const completo = completarCabecalho(atual, headers);
+        if (!completo) return [];
+        if (atual.some(valor => valor.trim())) {
+          console.warn(`[WORKSPACE] Aba ${title}: colunas acrescentadas ao cabeçalho: ${completo.slice(atual.filter(valor => valor.trim()).length).join(', ')}.`);
+        }
+        return [{ range: `'${title}'!A1`, values: [completo] }];
+      }
+      return dashboardNeedsHeaders([atual]) ? [{ range: `'${title}'!A1`, values: [headers] }] : [];
+    });
     if (pendingHeaders.length > 0) {
       await sheets.spreadsheets.values.batchUpdate({
         spreadsheetId: sheetId,
-        requestBody: {
-          valueInputOption: 'USER_ENTERED',
-          data: pendingHeaders.map(({ range, headers }) => ({ range, values: [headers] }))
-        }
+        requestBody: { valueInputOption: 'USER_ENTERED', data: pendingHeaders }
       });
     }
 

@@ -4,7 +4,20 @@ import test from 'node:test';
 
 import { prisma } from '../src/db';
 import { sincronizarCadastros } from '../src/jobs/syncAdminSheets';
-import { EMPRESA_HEADERS, SINDICATO_HEADERS, sanitizarEmpresas, sanitizarSindicatos } from '../src/services/adminSheetParser';
+import { EMPRESA_HEADERS, SINDICATO_HEADERS, alinharAoCabecalho, completarCabecalho, sanitizarEmpresas, sanitizarSindicatos } from '../src/services/adminSheetParser';
+
+test('completarCabecalho preserva colunas antigas e só acrescenta as que faltam', () => {
+  const antigo = ['CNPJ', 'Razão Social', 'Nome Fantasia', 'CNAE Principal', 'CNAEs Secundários', 'UF', 'Município', '', ''];
+  const completo = completarCabecalho(antigo, ['Código da Empresa', 'CNPJ', 'Razão Social', 'CNAE Principal', 'UF', 'Município', 'CCT (Registro MTE)']);
+  assert.deepEqual(completo, ['CNPJ', 'Razão Social', 'Nome Fantasia', 'CNAE Principal', 'CNAEs Secundários', 'UF', 'Município', 'Código da Empresa', 'CCT (Registro MTE)']);
+  assert.equal(completarCabecalho(completo!, ['cnpj', 'MUNICIPIO']), null);
+  assert.deepEqual(completarCabecalho([], ['CNPJ', 'UF']), ['CNPJ', 'UF']);
+});
+
+test('alinharAoCabecalho grava cada valor na coluna de mesmo nome', () => {
+  const alinhado = alinharAoCabecalho([['123', 'ACME', 'SC']], ['CNPJ', 'Razão Social', 'UF'], ['UF', 'Nome Fantasia', 'razao social', 'CNPJ']);
+  assert.deepEqual(alinhado, [['SC', '', 'ACME', '123']]);
+});
 
 function cnpjDeTeste(prefixo: string): string {
   return `${prefixo}${randomUUID().replace(/\D/g, '').padEnd(12, '0').slice(0, 12)}`;
