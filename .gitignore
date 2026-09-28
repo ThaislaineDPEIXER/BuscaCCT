@@ -5,6 +5,7 @@ prisma/*.db
 prisma/*.db-journal
 .env.*
 !.env.example
+katrade-ia-113cf54759d0.json
 *.db
 *.db-journal
 **/__pycache__/
