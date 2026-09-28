@@ -4,6 +4,9 @@
   "private": true,
   "description": "API backend para busca, extração e alertas de convenções coletivas (CCTs)",
   "main": "dist/server.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
