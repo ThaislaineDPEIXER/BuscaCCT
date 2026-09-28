@@ -41,6 +41,7 @@ const googleClientEmail = process.env.GOOGLE_CLIENT_EMAIL ?? '';
 const googlePrivateKey = process.env.GOOGLE_PRIVATE_KEY ?? '';
 const googleDriveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID ?? '';
 const googleSheetId = process.env.GOOGLE_SHEET_ID ?? '';
+const googleDriveInboxFolderId = process.env.GOOGLE_DRIVE_INBOX_FOLDER_ID ?? '';
 if (documentStorageDriver === 'workspace' && [googleClientEmail, googlePrivateKey, googleDriveFolderId, googleSheetId].some(value => !value)) {
   throw new Error('Credenciais e IDs do Google Workspace sao obrigatorios quando DOCUMENT_STORAGE_DRIVER=workspace');
 }
@@ -103,5 +104,6 @@ export const env = {
   googleClientEmail,
   googlePrivateKey,
   googleDriveFolderId,
-  googleSheetId
+  googleSheetId,
+  googleDriveInboxFolderId
 };

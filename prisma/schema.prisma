@@ -102,6 +102,7 @@ model Cliente {
   quantidadeFuncionarios Int?
   porte           String?
   sindicatoFolha  String?
+  cctRegistro     String?
   criadoEm        DateTime                @default(now())
   atualizadoEm    DateTime                @updatedAt
   enquadramentos  EnquadramentoSindical[]

@@ -174,8 +174,8 @@ export async function buscarCctNoSite(sindicatoId: string): Promise<{ cctId: str
     throw new Error('O documento encontrado no site nao e um PDF verificavel');
   }
 
-  const { extrairTextoPdfComClaude } = await import('./cctOcr');
-  const texto = await extrairTextoPdfComClaude(pdf);
+  const { extrairTextoPdf } = await import('./cctOcr');
+  const texto = await extrairTextoPdf(pdf);
   const anoVigencia = anoDoDocumento(documentoUrl, texto);
   const hashDocumento = crypto.createHash('sha256').update(pdf).digest('hex');
   const documento = await storePdf(

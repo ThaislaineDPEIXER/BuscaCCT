@@ -12,6 +12,7 @@ import { resolveStoredDocumentPath } from '../services/documentStorage';
 import { STATUS_ENQUADRAMENTO, rotuloStatusEnquadramento } from '../services/enquadramentoStatus';
 import { appendRowToSheet, ensureCctDashboard, syncEnquadramentoMatrix, uploadPdfToDrive } from '../services/googleWorkspace';
 import { buscarESalvarCCT } from '../tools/mteScraper';
+import { importarDocumentosDoDrive } from './importDocuments';
 import { syncAdminSheets } from './syncAdminSheets';
 
 const pausar = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -139,6 +140,12 @@ export async function executarFilaMte(): Promise<void> {
 
   varreduraEmAndamento = true;
   try {
+    try {
+      await importarDocumentosDoDrive();
+    } catch (error) {
+      console.error('[DOCS] Documentos da pasta de entrada não importados; os cadastros atuais seguem valendo:', error);
+    }
+
     try {
       await syncAdminSheets();
     } catch (error) {

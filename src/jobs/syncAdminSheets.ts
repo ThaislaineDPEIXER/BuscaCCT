@@ -55,13 +55,12 @@ async function vincular(
 
   await prisma.enquadramentoSindical.upsert({
     where: chave,
-    update: { tipo, status: STATUS_ENQUADRAMENTO.CONFIRMADO, ...(empresa.grau ? { grau: empresa.grau } : {}), ...auditoria },
+    update: { tipo, status: STATUS_ENQUADRAMENTO.CONFIRMADO, ...auditoria },
     create: {
       clienteId,
       sindicatoId: sindicato.id,
       tipo,
       status: STATUS_ENQUADRAMENTO.CONFIRMADO,
-      ...(empresa.grau ? { grau: empresa.grau } : {}),
       ...auditoria
     }
   });
@@ -105,13 +104,11 @@ export async function sincronizarCadastros(dados: AdminSheetData): Promise<Resum
       const campos = {
         razaoSocial: empresa.razaoSocial,
         cnaePrincipal: empresa.cnaePrincipal,
-        cnaesSecundarios: empresa.cnaesSecundarios,
         uf: empresa.uf,
         cidade: empresa.cidade,
-        ...(empresa.nomeFantasia ? { nomeFantasia: empresa.nomeFantasia } : {}),
         ...(empresa.descricaoCnae ? { descricaoCnae: empresa.descricaoCnae } : {}),
-        ...(empresa.quantidadeFuncionarios !== undefined ? { quantidadeFuncionarios: empresa.quantidadeFuncionarios } : {}),
-        ...(empresa.porte ? { porte: empresa.porte } : {}),
+        ...(empresa.codigoErp ? { codigoErp: empresa.codigoErp } : {}),
+        ...(empresa.cctRegistro ? { cctRegistro: empresa.cctRegistro } : {}),
         ...(empresa.sindicatoFolha ? { sindicatoFolha: empresa.sindicatoFolha } : {})
       };
       const cliente = await prisma.cliente.upsert({

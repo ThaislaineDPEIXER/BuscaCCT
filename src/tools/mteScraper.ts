@@ -3,7 +3,7 @@ import { BrowserContext, chromium, Page } from 'playwright';
 import { prisma } from '../db';
 import { env } from '../config/env';
 import { criarAlertaNovaCct } from '../services/alertService';
-import { extrairTextoPdfComClaude } from '../services/cctOcr';
+import { extrairTextoPdf } from '../services/cctOcr';
 import { storePdf } from '../services/documentStorage';
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
@@ -148,7 +148,7 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
       throw new CctUnavailableError('Mediador retornou texto insuficiente e nao disponibilizou um PDF');
     }
     pdfBuffer = await pdf.body();
-    texto = await extrairTextoPdfComClaude(pdfBuffer);
+    texto = await extrairTextoPdf(pdfBuffer);
   }
   if (!texto) throw new CctUnavailableError('Mediador retornou uma CCT vazia');
   if (documentPage !== page) await documentPage.close();

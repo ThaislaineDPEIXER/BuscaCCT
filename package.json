@@ -22,7 +22,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "receita:importar": "ts-node-dev --transpile-only src/jobs/importReceita.ts",
     "sindicato:registrar": "ts-node --transpile-only src/jobs/registerUnion.ts",
-    "planilha:sincronizar": "node dist/jobs/syncAdminSheets.js"
+    "planilha:sincronizar": "node dist/jobs/syncAdminSheets.js",
+    "documentos:importar": "node dist/jobs/importDocuments.js"
   },
   "dependencies": {
     "@actions/core": "^1.11.1",

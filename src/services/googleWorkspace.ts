@@ -93,6 +93,82 @@ export async function appendRowToSheet(sheetId: string, values: string[]): Promi
   });
 }
 
+export type DocumentoPendente = { id: string; nome: string; mimeType: string; tamanho: number };
+export type StatusImportacao = 'importado' | 'erro';
+
+const PROPRIEDADE_IMPORTACAO = 'radarImportacao';
+
+function driveClient() {
+  return createDriveClient({ version: 'v3', auth: createAuth() });
+}
+
+export async function listarDocumentosPendentes(folderId: string): Promise<DocumentoPendente[]> {
+  if (!/^[A-Za-z0-9_-]+$/.test(folderId)) throw new Error('GOOGLE_DRIVE_INBOX_FOLDER_ID inválido.');
+  const drive = driveClient();
+  const documentos: DocumentoPendente[] = [];
+  let pageToken: string | undefined;
+
+  do {
+    const pagina = await drive.files.list({
+      q: [
+        `'${folderId}' in parents`,
+        'trashed = false',
+        "mimeType != 'application/vnd.google-apps.folder'",
+        `not appProperties has { key='${PROPRIEDADE_IMPORTACAO}' and value='importado' }`,
+        `not appProperties has { key='${PROPRIEDADE_IMPORTACAO}' and value='erro' }`
+      ].join(' and '),
+      fields: 'nextPageToken, files(id, name, mimeType, size)',
+      orderBy: 'createdTime',
+      pageSize: 100,
+      pageToken,
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true
+    });
+    for (const arquivo of pagina.data.files ?? []) {
+      if (arquivo.id && arquivo.name) {
+        documentos.push({ id: arquivo.id, nome: arquivo.name, mimeType: arquivo.mimeType ?? '', tamanho: Number(arquivo.size ?? 0) });
+      }
+    }
+    pageToken = pagina.data.nextPageToken ?? undefined;
+  } while (pageToken);
+
+  return documentos;
+}
+
+export async function baixarArquivoDrive(fileId: string): Promise<Buffer> {
+  const resposta = await driveClient().files.get(
+    { fileId, alt: 'media', supportsAllDrives: true },
+    { responseType: 'arraybuffer' }
+  );
+  return Buffer.from(resposta.data as ArrayBuffer);
+}
+
+export async function marcarDocumento(fileId: string, status: StatusImportacao, detalhe: string): Promise<void> {
+  await driveClient().files.update({
+    fileId,
+    supportsAllDrives: true,
+    requestBody: {
+      appProperties: {
+        [PROPRIEDADE_IMPORTACAO]: status,
+        radarImportadoEm: new Date().toISOString(),
+        radarDetalhe: detalhe.slice(0, 90)
+      }
+    }
+  });
+}
+
+export async function appendAdminRows(sheetId: string, aba: 'cadastro' | 'sindicatos', rows: string[][]): Promise<void> {
+  if (rows.length === 0) return;
+  const estrutura = await ensureAdminSheetStructure(sheetId);
+  await sheetsClient().spreadsheets.values.append({
+    spreadsheetId: sheetId,
+    range: `'${estrutura[aba].title}'!A:${columnLetter(SHEET_LAYOUT[aba].headers.length)}`,
+    valueInputOption: 'RAW',
+    insertDataOption: 'INSERT_ROWS',
+    requestBody: { values: rows }
+  });
+}
+
 export async function syncEnquadramentoMatrix(sheetId: string, rows: string[][]): Promise<void> {
   const sheets = sheetsClient();
   const { matriz } = await ensureAdminSheetStructure(sheetId);

@@ -1,9 +1,7 @@
-import { GRAUS_ENQUADRAMENTO, type GrauEnquadramento } from './enquadramentoStatus';
-
 export const EMPRESA_HEADERS = [
-  'CNPJ', 'Razão Social', 'Nome Fantasia', 'CNAE Principal', 'Descrição CNAE', 'CNAEs Secundários',
-  'UF', 'Município', 'Funcionários', 'Porte', 'Sindicato na Folha',
-  'CNPJ Sindicato Laboral', 'CNPJ Sindicato Patronal', 'Grau'
+  'Código da Empresa', 'CNPJ', 'Razão Social', 'CNAE Principal', 'Descrição CNAE',
+  'UF', 'Município', 'Sindicato na Folha', 'CCT (Registro MTE)',
+  'CNPJ Sindicato Laboral', 'CNPJ Sindicato Patronal'
 ] as const;
 
 export const SINDICATO_HEADERS = [
@@ -12,20 +10,17 @@ export const SINDICATO_HEADERS = [
 
 export type EmpresaPlanilha = {
   linha: number;
+  codigoErp?: string;
   cnpj: string;
   razaoSocial: string;
-  nomeFantasia?: string;
   cnaePrincipal: string;
   descricaoCnae?: string;
-  cnaesSecundarios: string[];
   uf: string;
   cidade: string;
-  quantidadeFuncionarios?: number;
-  porte?: string;
   sindicatoFolha?: string;
+  cctRegistro?: string;
   cnpjSindicatoLaboral?: string;
   cnpjSindicatoPatronal?: string;
-  grau?: GrauEnquadramento;
 };
 
 export type SindicatoPlanilha = {
@@ -73,6 +68,14 @@ function cnaeValido(valor: string): string {
   return digitos;
 }
 
+function registroCctValido(valor: string): string {
+  const registro = valor.replace(/\s/g, '').toUpperCase();
+  if (!/^[A-Z]{2}\d{6}\/\d{4}$/.test(registro)) {
+    throw new Error(`CCT deve estar no formato do registro MTE, ex.: SC000123/2026 (recebido: "${valor}").`);
+  }
+  return registro;
+}
+
 function lerLinhas(aba: string, valores: string[][] | undefined, obrigatorios: readonly string[]): { linhas: Linha[]; rejeitadas: LinhaRejeitada[] } {
   const [cabecalho, ...dados] = valores ?? [];
   const indices = new Map((cabecalho ?? []).map((header, index) => [normalizarTexto(String(header)), index]));
@@ -108,33 +111,23 @@ export function sanitizarEmpresas(valores: string[][] | undefined, aba = 'Cadast
       if (!/^[A-Z]{2}$/.test(uf)) throw new Error(`UF inválida: "${campo('UF')}".`);
       if (!cidade) throw new Error('Município é obrigatório.');
 
-      const funcionarios = campo('Funcionários').replace(/[.\s]/g, '');
-      if (funcionarios && !/^\d+$/.test(funcionarios)) {
-        throw new Error(`Funcionários deve ser um número inteiro (recebido: "${campo('Funcionários')}").`);
-      }
-      const grauTexto = normalizarTexto(campo('Grau')).toUpperCase();
-      if (grauTexto && !(GRAUS_ENQUADRAMENTO as readonly string[]).includes(grauTexto)) {
-        throw new Error(`Grau deve ser Direto, Preponderante ou Diferenciado (recebido: "${campo('Grau')}").`);
-      }
       const laboral = campo('CNPJ Sindicato Laboral');
       const patronal = campo('CNPJ Sindicato Patronal');
+      const cct = campo('CCT (Registro MTE)');
 
       registros.push({
         linha: numero,
+        codigoErp: opcional(campo('Código da Empresa')),
         cnpj: cnpjValido(campo('CNPJ'), 'CNPJ da empresa'),
         razaoSocial,
-        nomeFantasia: opcional(campo('Nome Fantasia')),
         cnaePrincipal: cnaeValido(campo('CNAE Principal')),
         descricaoCnae: opcional(campo('Descrição CNAE')),
-        cnaesSecundarios: lista(campo('CNAEs Secundários')).map(cnaeValido),
         uf,
         cidade,
-        quantidadeFuncionarios: funcionarios ? Number(funcionarios) : undefined,
-        porte: opcional(campo('Porte')),
         sindicatoFolha: opcional(campo('Sindicato na Folha')),
+        cctRegistro: cct ? registroCctValido(cct) : undefined,
         cnpjSindicatoLaboral: laboral ? cnpjValido(laboral, 'CNPJ do sindicato laboral') : undefined,
-        cnpjSindicatoPatronal: patronal ? cnpjValido(patronal, 'CNPJ do sindicato patronal') : undefined,
-        grau: grauTexto ? grauTexto as GrauEnquadramento : undefined
+        cnpjSindicatoPatronal: patronal ? cnpjValido(patronal, 'CNPJ do sindicato patronal') : undefined
       });
     } catch (error) {
       rejeitadas.push({ aba, linha: numero, motivo: error instanceof Error ? error.message : String(error) });
