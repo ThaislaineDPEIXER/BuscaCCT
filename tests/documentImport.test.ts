@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import * as XLS from '@e965/xlsx';
 
 import { EMPRESA_HEADERS, SINDICATO_HEADERS } from '../src/services/adminSheetParser';
@@ -75,4 +75,34 @@ test('lerCadastroSindicalExcel preserva linhas de cadastro e deduplica sem criar
     assert.match(linhas.rejeitadas[0], /item 5 rejeitado/);
   }
   assert.throws(() => lerCadastroSindicalExcel(Buffer.from('invalido'), { empresas: new Set(), sindicatos: new Set() }, 'outro.xls'), /nenhuma aba possui/);
+});
+
+test('lerCadastroSindicalExcel ignora aba anunciada sem conteúdo', () => {
+  const workbook = XLS.utils.book_new();
+  XLS.utils.book_append_sheet(workbook, XLS.utils.aoa_to_sheet([
+    ['CNPJ', 'Nome do Sindicato', 'UF'],
+    ['11.222.333/0001-81', 'Sindicato do Comércio', 'SC']
+  ]), 'Cadastro');
+  const arquivo = XLS.write(workbook, { bookType: 'biff8', type: 'buffer' });
+  const lido = XLS.read(arquivo, { type: 'buffer' });
+  const leitor = mock.method(require('@e965/xlsx'), 'read', () => ({
+    ...lido,
+    SheetNames: ['Auxiliar', ...lido.SheetNames]
+  }));
+  try {
+    const linhas = lerCadastroSindicalExcel(arquivo, { empresas: new Set(), sindicatos: new Set() }, 'sindicatos.xls');
+    assert.equal(linhas.sindicatos.length, 1);
+  } finally {
+    leitor.mock.restore();
+  }
+
+  const somenteAbaAusente = mock.method(require('@e965/xlsx'), 'read', () => ({
+    SheetNames: ['Auxiliar'],
+    Sheets: {}
+  }));
+  try {
+    assert.throws(() => lerCadastroSindicalExcel(arquivo, { empresas: new Set(), sindicatos: new Set() }, 'sindicatos.xls'), /nenhuma aba possui as colunas/);
+  } finally {
+    somenteAbaAusente.mock.restore();
+  }
 });

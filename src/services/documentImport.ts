@@ -63,6 +63,7 @@ export function lerCadastroSindicalExcel(
   const workbook = XLS.read(arquivo, { type: 'buffer', cellDates: false });
   for (const nome of workbook.SheetNames) {
     const aba = workbook.Sheets[nome];
+    if (!aba) continue;
     if (aba['!ref'] && XLS.utils.decode_range(aba['!ref']).e.r >= 50_000) {
       throw new Error(`${origem}: aba "${nome}" excede 50.000 linhas; divida o arquivo antes de importar.`);
     }
