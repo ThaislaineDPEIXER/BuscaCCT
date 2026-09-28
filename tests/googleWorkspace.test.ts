@@ -47,3 +47,28 @@ test('listarDocumentosPendentes inclui arquivos da pasta principal e da subpasta
     drive.mock.restore();
   }
 });
+
+test('reprocessamento manual inclui apenas planilhas sindicais com erro', async () => {
+  const consultas: string[] = [];
+  const drive = mock.method(googleDrive, 'drive', () => ({
+    files: {
+      list: async ({ q }: { q: string }) => {
+        consultas.push(q);
+        if (q.includes("name = 'Cadastros de Sindicatos'")) return { data: { files: [{ id: 'subpasta' }] } };
+        if (q.includes("'entrada' in parents")) return { data: { files: [] } };
+        return { data: { files: [
+          { id: 'xls', name: 'sindicatos.xls', mimeType: 'application/vnd.ms-excel', appProperties: { radarImportacao: 'erro' } },
+          { id: 'pdf', name: 'cartao.pdf', mimeType: 'application/pdf', appProperties: { radarImportacao: 'erro' } }
+        ] } };
+      }
+    }
+  }) as never);
+  try {
+    const documentos = await listarDocumentosPendentes('entrada', true);
+    assert.deepEqual(documentos.map(item => item.nome), ['sindicatos.xls']);
+    assert.ok(consultas.some(q => q.includes("'subpasta' in parents") && !q.includes("value='erro'")));
+    assert.ok(consultas.some(q => q.includes("'entrada' in parents") && q.includes("value='erro'")));
+  } finally {
+    drive.mock.restore();
+  }
+});

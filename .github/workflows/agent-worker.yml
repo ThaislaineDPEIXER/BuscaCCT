@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: '0 6 * * 1-5'
   workflow_dispatch:
+    inputs:
+      retry_failed_union_imports:
+        description: 'Reprocessar planilhas sindicais com erro na pasta de entrada'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -50,4 +55,5 @@ jobs:
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_DRIVE_INBOX_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_INBOX_FOLDER_ID }}
+          RETRY_FAILED_UNION_IMPORTS: ${{ inputs.retry_failed_union_imports || 'false' }}
         run: npm run start:worker

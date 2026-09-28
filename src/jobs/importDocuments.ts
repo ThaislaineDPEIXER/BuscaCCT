@@ -30,7 +30,7 @@ export async function importarDocumentosDoDrive(): Promise<ResumoImportacaoDocum
     return null;
   }
 
-  const pendentes = await listarDocumentosPendentes(env.googleDriveInboxFolderId);
+  const pendentes = await listarDocumentosPendentes(env.googleDriveInboxFolderId, process.env.RETRY_FAILED_UNION_IMPORTS === 'true');
   const resumo: ResumoImportacaoDocumentos = { documentos: pendentes.length, importados: 0, comErro: 0, empresas: 0, sindicatos: 0 };
   if (pendentes.length === 0) {
     console.info('[DOCS] Nenhum documento novo na pasta de entrada.');
