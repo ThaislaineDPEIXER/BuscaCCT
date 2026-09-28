@@ -43,7 +43,9 @@ PORT=3000
 NODE_ENV=production
 DATABASE_URL=postgresql://pooler-transacao:6543/postgres?pgbouncer=true
 DIRECT_URL=postgresql://pooler-sessao:5432/postgres
-ANTHROPIC_API_KEY=token-real
+AI_PROVIDER=gemini
+GEMINI_API_KEY=token-gemini
+ANTHROPIC_API_KEY=token-claude-opcional
 DOCUMENT_STORAGE_PATH=/app/data/documents
 DOCUMENT_STORAGE_DRIVER=workspace
 GOOGLE_CLIENT_EMAIL=service-account@projeto.iam.gserviceaccount.com

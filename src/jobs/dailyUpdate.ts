@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import cron from 'node-cron';
 import { env } from '../config/env';
 import { prisma } from '../db';
-import { extrairCctComClaude } from '../services/claudeAgent';
+import { extrairCctComIa } from '../services/claudeAgent';
 import { persistirExtracaoCct } from '../services/cctExtractionPersistence';
 import { enviarDigest, gerarAlertasDataBase } from '../services/alertService';
 import { notificarFalhaMte } from '../services/operationalAlert';
@@ -102,7 +102,7 @@ export async function executarFilaMte(): Promise<void> {
         console.info(`[MTE] Processando ${sindicato.cnpj} (${sindicato.razaoSocial})`);
         const anoVigencia = new Date().getFullYear();
         const textoBruto = await buscarESalvarCCT(sindicato.cnpj, anoVigencia);
-        const parametros = await extrairCctComClaude(textoBruto);
+        const parametros = await extrairCctComIa(textoBruto);
 
         await persistirExtracaoCct(sindicato.cnpj, anoVigencia, parametros);
         await publicarCctNoWorkspace(sindicato.cnpj, anoVigencia, sindicato.razaoSocial);

@@ -1,9 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env';
 import { buscarESalvarCCT } from '../tools/mteScraper';
 import { consultarIndice } from '../tools/ibgeApi';
 
-const anthropic = new Anthropic({ apiKey: env.anthropicApiKey });
+const anthropic = env.anthropicApiKey ? new Anthropic({ apiKey: env.anthropicApiKey }) : null;
+const gemini = env.geminiApiKey ? new GoogleGenerativeAI(env.geminiApiKey) : null;
 
 export interface ExtracaoCct {
   sindicato_nome: string | null;
@@ -161,8 +163,18 @@ export function validarExtracaoCct(valor: unknown): ExtracaoCct {
   return dados as ExtracaoCct;
 }
 
-export async function extrairCctComClaude(textoBruto: string): Promise<ExtracaoCct> {
-  if (!textoBruto.trim()) throw new Error('Texto bruto da CCT vazio');
+function validarRespostaExtracao(resposta: string, provedor: string): ExtracaoCct {
+  let bruto: unknown;
+  try {
+    bruto = JSON.parse(resposta.replace(/^```json\s*|\s*```$/g, '').trim());
+  } catch {
+    throw new Error(`${provedor} nao retornou JSON valido para a CCT`);
+  }
+  return validarExtracaoCct(bruto);
+}
+
+async function extrairCctComAnthropic(textoBruto: string): Promise<ExtracaoCct> {
+  if (!anthropic) throw new Error('ANTHROPIC_API_KEY nao configurada');
   const resposta = await anthropic.messages.create({
     model: env.anthropicModel,
     max_tokens: 2_000,
@@ -170,16 +182,29 @@ export async function extrairCctComClaude(textoBruto: string): Promise<ExtracaoC
     system: SYSTEM_PROMPT_EXTRACAO_CCT,
     messages: [{ role: 'user', content: `Extraia os dados desta CCT:\n\n${textoBruto}` }]
   });
-  let bruto: unknown;
-  try {
-    bruto = JSON.parse(extrairTexto(resposta));
-  } catch {
-    throw new Error('Claude nao retornou JSON valido para a CCT');
-  }
-  return validarExtracaoCct(bruto);
+  return validarRespostaExtracao(extrairTexto(resposta), 'Claude');
+}
+
+async function extrairCctComGemini(textoBruto: string): Promise<ExtracaoCct> {
+  if (!gemini) throw new Error('GEMINI_API_KEY nao configurada');
+  const model = gemini.getGenerativeModel({
+    model: env.geminiModel,
+    systemInstruction: SYSTEM_PROMPT_EXTRACAO_CCT,
+    generationConfig: { temperature: 0, responseMimeType: 'application/json' }
+  });
+  const resposta = await model.generateContent(`Extraia os dados desta CCT:\n\n${textoBruto}`);
+  return validarRespostaExtracao(resposta.response.text(), 'Gemini');
+}
+
+export async function extrairCctComIa(textoBruto: string): Promise<ExtracaoCct> {
+  if (!textoBruto.trim()) throw new Error('Texto bruto da CCT vazio');
+  return env.aiProvider === 'gemini'
+    ? extrairCctComGemini(textoBruto)
+    : extrairCctComAnthropic(textoBruto);
 }
 
 export async function consultarBuscador(pergunta: string): Promise<string> {
+  if (!anthropic) throw new Error('Consultar o buscador requer ANTHROPIC_API_KEY configurada');
   const messages: Anthropic.MessageParam[] = [{
     role: 'user',
     content: anonimizarPergunta(pergunta)

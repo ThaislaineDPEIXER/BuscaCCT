@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { prisma } from '../db';
 import { assinarAlertas, atualizarAlerta, listarAlertas } from '../services/alertService';
-import { consultarBuscador, extrairCctComClaude, validarExtracaoCct } from '../services/claudeAgent';
+import { consultarBuscador, extrairCctComIa, validarExtracaoCct } from '../services/claudeAgent';
 import { persistirExtracaoCct } from '../services/cctExtractionPersistence';
 import { buscarESalvarCCT } from '../tools/mteScraper';
 
@@ -58,17 +58,17 @@ moduloDpRoutes.get('/parametros-cct/:cnpj', async (req, res) => {
     });
 
     const texto = cct?.textoCompleto ?? await buscarESalvarCCT(cnpj, anoAtual);
-    let parametros: Awaited<ReturnType<typeof extrairCctComClaude>>;
+    let parametros: Awaited<ReturnType<typeof extrairCctComIa>>;
     let precisaPersistir = !cct?.parametrosJson;
     if (cct?.parametrosJson) {
       try {
         parametros = validarExtracaoCct(JSON.parse(cct.parametrosJson));
       } catch {
-        parametros = await extrairCctComClaude(texto);
+        parametros = await extrairCctComIa(texto);
         precisaPersistir = true;
       }
     } else {
-      parametros = await extrairCctComClaude(texto);
+      parametros = await extrairCctComIa(texto);
     }
 
     if (precisaPersistir) {

@@ -62,7 +62,7 @@ PDFs capturados pelo MTE recebem hash SHA-256 e têm sua localização registrad
 
 Configure `GOOGLE_CLIENT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_DRIVE_FOLDER_ID` e `GOOGLE_SHEET_ID` como segredos do GitHub. Compartilhe a pasta do Drive e a planilha com o e-mail da service account, com permissão de edição. O worker publica links de leitura para os PDFs; confirme que essa política atende às regras de acesso da organização antes de ativá-lo.
 
-Após a transcrição, `src/services/claudeAgent.ts` valida um contrato JSON estrito com `impactos_folha` e `contribuicoes_sindicais`. O serviço `src/services/cctExtractionPersistence.ts` grava esses itens em `ImpactoFolha` e `ContribuicaoSindical` dentro de uma transação serializável, preservando evidências textuais e registros já validados pelo DP. O módulo `src/services/cctOcr.ts` permanece responsável exclusivamente pela transcrição de PDFs.
+Após a transcrição, `src/services/claudeAgent.ts` seleciona Gemini ou Claude por `AI_PROVIDER` e valida um contrato JSON estrito com `impactos_folha` e `contribuicoes_sindicais`. O worker usa Gemini quando `AI_PROVIDER=gemini`; Claude continua disponível com `AI_PROVIDER=anthropic`. O serviço `src/services/cctExtractionPersistence.ts` grava esses itens em `ImpactoFolha` e `ContribuicaoSindical` dentro de uma transação serializável, preservando evidências textuais e registros já validados pelo DP. O módulo `src/services/cctOcr.ts` permanece responsável exclusivamente pela transcrição de PDFs.
 
 O worker usa locks distribuídos em PostgreSQL por CNPJ (`WORKER_LOCK_TTL_MS`). Falhas do MTE não bloqueiam a fila: cada sindicato registra `proximaTentativa` e `falhasConsecutivas`, com backoff exponencial entre `MTE_RETRY_BASE_DELAY_MS` e `MTE_RETRY_MAX_DELAY_MS`.
 
@@ -75,7 +75,7 @@ O worker roda em cron às 02:00 e percorre sindicatos ativos para buscar atualiz
 O scraper usa Playwright para visitar o sistema do Ministério do Trabalho, preencher CNPJ e ano e retornar o texto oficial da CCT para processamento. Se o portal passar a exibir um CAPTCHA, a consulta é interrompida e sinalizada como falha operacional; não há bypass ou dado simulado.
 
 ### 4. Extração por IA
-O módulo de OCR/extrator usa o Claude para interpretar o texto bruto e devolver JSON estruturado com valores relevantes de convenção.
+O extrator usa Gemini ou Claude para interpretar o texto bruto e devolver JSON estruturado com valores relevantes de convenção, conforme `AI_PROVIDER`.
 
 ### 5. Persistência
 O Prisma armazena clientes, sindicatos, enquadramentos, CCTs e alertas em PostgreSQL. A aplicação usa migrations versionadas; `db push` não faz parte do fluxo de deploy.
@@ -107,7 +107,7 @@ Os dados extraídos continuam sujeitos à validação do DP. Nenhum impacto fina
 
 1. O worker seleciona sindicatos ativos.
 2. O scraper consulta o MTE.
-3. O texto bruto é enviado ao Claude.
+3. O texto bruto é enviado ao provedor de IA configurado.
 4. A extração gera JSON estruturado.
 5. O resultado é salvo como `CCT` e dispara `Alerta`.
 6. A API expõe o conteúdo para o portal via endpoints e SSE.

@@ -20,6 +20,19 @@ function booleanEnv(name: string, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
 
+const aiProvider = process.env.AI_PROVIDER ?? 'anthropic';
+if (!['anthropic', 'gemini'].includes(aiProvider)) {
+  throw new Error('AI_PROVIDER deve ser anthropic ou gemini');
+}
+const anthropicApiKey = process.env.ANTHROPIC_API_KEY ?? '';
+const geminiApiKey = process.env.GEMINI_API_KEY ?? '';
+if (aiProvider === 'anthropic' && !anthropicApiKey) {
+  throw new Error('ANTHROPIC_API_KEY e obrigatoria quando AI_PROVIDER=anthropic');
+}
+if (aiProvider === 'gemini' && !geminiApiKey) {
+  throw new Error('GEMINI_API_KEY e obrigatoria quando AI_PROVIDER=gemini');
+}
+
 const documentStorageDriver = process.env.DOCUMENT_STORAGE_DRIVER ?? 'local';
 if (!['local', 'workspace'].includes(documentStorageDriver)) {
   throw new Error('DOCUMENT_STORAGE_DRIVER deve ser local ou workspace');
@@ -35,9 +48,12 @@ if (documentStorageDriver === 'workspace' && [googleClientEmail, googlePrivateKe
 export const env = {
   port: numberEnv('PORT', 3000),
   databaseUrl: required('DATABASE_URL'),
-  anthropicApiKey: required('ANTHROPIC_API_KEY'),
+  aiProvider,
+  anthropicApiKey,
   anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-20250514',
   anthropicVisionModel: process.env.ANTHROPIC_VISION_MODEL ?? 'claude-3-5-sonnet-20241022',
+  geminiApiKey,
+  geminiModel: process.env.GEMINI_MODEL ?? 'gemini-1.5-flash',
   ibgeBaseUrl: process.env.IBGE_BASE_URL ?? 'https://servicodados.ibge.gov.br/api/v3/agregados',
   ibgeIpcaAgregado: process.env.IBGE_IPCA_AGREGADO ?? '7060',
   ibgeInpcAgregado: process.env.IBGE_INPC_AGREGADO ?? '7061',
