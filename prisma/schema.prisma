@@ -47,6 +47,8 @@ model Sindicato {
   mesDataBase     Int?
   siteUrl         String?
   siteOficial     String?
+  codigoSindical  String?
+  baseTerritorial String[]    @default([])
   ativo           Boolean     @default(true)
   statusMonitoramento String   @default("ATIVO")
   ultimaVarredura DateTime?
@@ -91,10 +93,15 @@ model Cliente {
   codigoErp       String?
   cnpj            String                  @unique
   razaoSocial     String
+  nomeFantasia    String?
   cnaePrincipal   String
+  cnaesSecundarios String[]               @default([])
   descricaoCnae   String
   uf              String
   cidade          String
+  quantidadeFuncionarios Int?
+  porte           String?
+  sindicatoFolha  String?
   criadoEm        DateTime                @default(now())
   atualizadoEm    DateTime                @updatedAt
   enquadramentos  EnquadramentoSindical[]
@@ -222,7 +229,12 @@ model EnquadramentoSindical {
   clienteId    String
   sindicatoId  String
   tipo         String
+  // SUGERIDO_IA = pendente, VALIDADO_DP = confirmado, REJEITADO
   status       String    @default("SUGERIDO_IA")
+  grau         String    @default("DIRETO")
+  validadoPor  String?
+  validadoEm   DateTime?
+  observacoes  String?
   criadoEm     DateTime  @default(now())
   atualizadoEm DateTime  @updatedAt
   cliente      Cliente   @relation(fields: [clienteId], references: [id], onDelete: Cascade)

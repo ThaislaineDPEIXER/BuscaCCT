@@ -9,8 +9,10 @@ import { notificarFalhaMte } from '../services/operationalAlert';
 import { varrerSindicato } from '../services/radarDiscovery';
 import { adquirirWorkerLock } from '../services/workerLock';
 import { resolveStoredDocumentPath } from '../services/documentStorage';
-import { appendRowToSheet, ensureCctDashboard, uploadPdfToDrive } from '../services/googleWorkspace';
+import { STATUS_ENQUADRAMENTO, rotuloStatusEnquadramento } from '../services/enquadramentoStatus';
+import { appendRowToSheet, ensureCctDashboard, syncEnquadramentoMatrix, uploadPdfToDrive } from '../services/googleWorkspace';
 import { buscarESalvarCCT } from '../tools/mteScraper';
+import { syncAdminSheets } from './syncAdminSheets';
 
 const pausar = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
 const delayAleatorio = (): number => {
@@ -27,12 +29,50 @@ export function calcularProximaTentativa(falhasConsecutivas: number, agora = new
 
 let varreduraEmAndamento = false;
 
+export function descreverImpacto(totalImpactos: number, resumo: string | null): string {
+  const alerta = totalImpactos > 0
+    ? `Alerta: ${totalImpactos} impacto(s) na folha`
+    : 'Sem alteração';
+  return resumo ? `${alerta} — ${resumo}` : alerta;
+}
+
+async function sincronizarMatrizEnquadramento(): Promise<void> {
+  if (env.documentStorageDriver !== 'workspace') return;
+
+  const enquadramentos = await prisma.enquadramentoSindical.findMany({
+    orderBy: [{ status: 'asc' }, { atualizadoEm: 'desc' }],
+    select: {
+      tipo: true,
+      grau: true,
+      status: true,
+      validadoPor: true,
+      validadoEm: true,
+      observacoes: true,
+      cliente: { select: { cnpj: true, razaoSocial: true, cnaePrincipal: true } },
+      sindicato: { select: { cnpj: true, razaoSocial: true } }
+    }
+  });
+
+  await syncEnquadramentoMatrix(env.googleSheetId, enquadramentos.map(item => [
+    item.cliente.cnpj,
+    item.cliente.razaoSocial,
+    item.cliente.cnaePrincipal,
+    `${item.sindicato.razaoSocial} (${item.sindicato.cnpj})`,
+    item.tipo,
+    item.grau,
+    rotuloStatusEnquadramento(item.status),
+    item.validadoPor ?? '',
+    item.validadoEm?.toISOString() ?? '',
+    item.observacoes ?? ''
+  ]));
+}
+
 async function publicarCctNoWorkspace(cnpjSindicato: string, anoVigencia: number, sindicatoNome: string): Promise<void> {
   if (env.documentStorageDriver !== 'workspace') return;
 
   const cct = await prisma.convencaoColetiva.findUnique({
     where: { cnpjSindicato_anoVigencia: { cnpjSindicato, anoVigencia } },
-    select: { id: true, documentoStoragePath: true, resumoCct: true }
+    select: { id: true, documentoStoragePath: true, resumoCct: true, _count: { select: { impactosFolha: true } } }
   });
   if (!cct?.documentoStoragePath) return;
 
@@ -53,11 +93,17 @@ async function publicarCctNoWorkspace(cnpjSindicato: string, anoVigencia: number
     console.warn('[WORKSPACE] CCT publicada, mas o painel do Sheets não pôde ser preparado:', error);
     return;
   }
+  const empresasVinculadas = await prisma.enquadramentoSindical.findMany({
+    where: { sindicato: { cnpj: cnpjSindicato }, status: STATUS_ENQUADRAMENTO.CONFIRMADO },
+    select: { cliente: { select: { razaoSocial: true, cnpj: true } } },
+    orderBy: { cliente: { razaoSocial: 'asc' } }
+  });
   await appendRowToSheet(env.googleSheetId, [
     new Date().toISOString(),
-    sindicatoNome,
-    linkPdf,
-    cct.resumoCct ?? 'Resumo indisponivel.'
+    empresasVinculadas.map(({ cliente }) => `${cliente.razaoSocial} (${cliente.cnpj})`).join('; '),
+    `${sindicatoNome} (${cnpjSindicato})`,
+    descreverImpacto(cct._count.impactosFolha, cct.resumoCct),
+    linkPdf
   ]);
 }
 
@@ -69,7 +115,7 @@ async function selecionarFila() {
   return prisma.sindicato.findMany({
     where: {
       ativo: true,
-      enquadramentos: { some: { status: 'VALIDADO_DP' } },
+      enquadramentos: { some: { status: STATUS_ENQUADRAMENTO.CONFIRMADO } },
       AND: [
         { OR: [{ proximaTentativa: null }, { proximaTentativa: { lte: agora } }] },
         { OR: [
@@ -93,6 +139,18 @@ export async function executarFilaMte(): Promise<void> {
 
   varreduraEmAndamento = true;
   try {
+    try {
+      await syncAdminSheets();
+    } catch (error) {
+      console.error('[SYNC] Cadastros da planilha não sincronizados; a fila usará os dados já existentes no banco:', error);
+    }
+
+    try {
+      await sincronizarMatrizEnquadramento();
+    } catch (error) {
+      console.warn('[WORKSPACE] Matriz de enquadramento não sincronizada; a fila segue normalmente:', error);
+    }
+
     const sindicatos = await selecionarFila();
     console.info(`[MTE] ${sindicatos.length} sindicatos selecionados para a fila.`);
 
@@ -151,7 +209,7 @@ export function startCronJobs(): ReturnType<typeof cron.schedule>[] {
     }
     console.info('[RADAR] Iniciando varredura semanal de sites');
     const sindicatos = await prisma.sindicato.findMany({
-      where: { ativo: true, enquadramentos: { some: { status: 'VALIDADO_DP' } } },
+      where: { ativo: true, enquadramentos: { some: { status: STATUS_ENQUADRAMENTO.CONFIRMADO } } },
       select: { id: true }
     });
     for (const sindicato of sindicatos) {

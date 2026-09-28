@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { buscarCctNoSite, estadoFallbackSindicato, importarSindicatos, varrerSindicato } from '../services/radarDiscovery';
+import { GRAUS_ENQUADRAMENTO, STATUS_ENQUADRAMENTO } from '../services/enquadramentoStatus';
 import { prisma } from '../db';
 
 export const radarRoutes = Router();
@@ -56,11 +57,30 @@ radarRoutes.get('/sindicatos/:id/fallback', async (req, res) => {
 });
 
 radarRoutes.post('/sindicatos/:id/validar', async (req, res) => {
-  const enquadramentoId = req.body?.enquadramentoId;
+  const { enquadramentoId, validadoPor, observacoes } = req.body ?? {};
+  const decisao: unknown = req.body?.decisao ?? 'CONFIRMADO';
+  const grau: unknown = req.body?.grau;
   if (typeof enquadramentoId !== 'string' || !enquadramentoId) {
     res.status(400).json({ erro: 'enquadramentoId é obrigatório.' });
     return;
   }
+  if (typeof validadoPor !== 'string' || !validadoPor.trim()) {
+    res.status(400).json({ erro: 'validadoPor é obrigatório (nome ou e-mail do responsável).' });
+    return;
+  }
+  if (decisao !== 'CONFIRMADO' && decisao !== 'REJEITADO') {
+    res.status(400).json({ erro: 'decisao deve ser CONFIRMADO ou REJEITADO.' });
+    return;
+  }
+  if (grau !== undefined && (typeof grau !== 'string' || !(GRAUS_ENQUADRAMENTO as readonly string[]).includes(grau))) {
+    res.status(400).json({ erro: `grau deve ser um de: ${GRAUS_ENQUADRAMENTO.join(', ')}.` });
+    return;
+  }
+  if (observacoes !== undefined && typeof observacoes !== 'string') {
+    res.status(400).json({ erro: 'observacoes deve ser texto.' });
+    return;
+  }
+  const status = STATUS_ENQUADRAMENTO[decisao];
 
   const enquadramento = await prisma.$transaction(async tx => {
     const existente = await tx.enquadramentoSindical.findFirst({
@@ -71,19 +91,28 @@ radarRoutes.post('/sindicatos/:id/validar', async (req, res) => {
 
     const atualizado = await tx.enquadramentoSindical.update({
       where: { id: existente.id },
-      data: { status: 'VALIDADO_DP' }
+      data: {
+        status,
+        validadoPor: validadoPor.trim(),
+        validadoEm: new Date(),
+        ...(typeof grau === 'string' ? { grau } : {}),
+        ...(observacoes !== undefined ? { observacoes: observacoes.trim() || null } : {})
+      }
     });
     await tx.alertaDP.upsert({
       where: { chaveUnica: `VALIDACAO_ENQUADRAMENTO:${existente.id}` },
       create: {
         sindicatoCnpj: existente.sindicato.cnpj,
-        titulo: 'Enquadramento validado pelo DP',
-        mensagem: `Enquadramento ${existente.id} validado para o sindicato ${req.params.id}.`,
+        titulo: decisao === 'CONFIRMADO' ? 'Enquadramento confirmado pelo DP' : 'Enquadramento rejeitado pelo DP',
+        mensagem: `Enquadramento ${existente.id} ${decisao.toLowerCase()} por ${validadoPor.trim()}.`,
         tipo: 'VALIDACAO_ENQUADRAMENTO',
         prioridade: 'BAIXA',
         chaveUnica: `VALIDACAO_ENQUADRAMENTO:${existente.id}`
       },
-      update: { dataAtualizacao: new Date() }
+      update: {
+        titulo: decisao === 'CONFIRMADO' ? 'Enquadramento confirmado pelo DP' : 'Enquadramento rejeitado pelo DP',
+        mensagem: `Enquadramento ${existente.id} ${decisao.toLowerCase()} por ${validadoPor.trim()}.`
+      }
     });
     return atualizado;
   });
@@ -93,7 +122,7 @@ radarRoutes.post('/sindicatos/:id/validar', async (req, res) => {
     return;
   }
 
-  res.json({ enquadramento, status: 'VALIDADO_DP' });
+  res.json({ enquadramento, decisao });
 });
 
 radarRoutes.post('/sindicatos/:id/fallback/cct', async (req, res) => {

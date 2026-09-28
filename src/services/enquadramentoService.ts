@@ -1,10 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { env } from '../config/env';
 import { prisma } from '../db';
+import { STATUS_ENQUADRAMENTO } from './enquadramentoStatus';
 
 const anthropic = new Anthropic({ apiKey: env.anthropicApiKey });
-const STATUS_SUGERIDO = 'SUGERIDO_IA';
-const STATUS_VALIDADO = 'VALIDADO_DP';
+const STATUS_SUGERIDO = STATUS_ENQUADRAMENTO.PENDENTE;
+const STATUS_VALIDADO = STATUS_ENQUADRAMENTO.CONFIRMADO;
 
 type ClienteInput = {
   cnpj: string;
@@ -73,7 +74,7 @@ export async function criarClienteESugerir(clienteInput: ClienteInput) {
   for (const escolha of selecionados) {
     const sindicato = candidatos.find(candidato => candidato.cnpj === escolha.cnpj)!;
     const atual = await prisma.enquadramentoSindical.findUnique({ where: { clienteId_sindicatoId: { clienteId: cliente.id, sindicatoId: sindicato.id } } });
-    if (atual?.status === STATUS_VALIDADO) continue;
+    if (atual?.status === STATUS_VALIDADO || atual?.status === STATUS_ENQUADRAMENTO.REJEITADO) continue;
     await prisma.enquadramentoSindical.upsert({
       where: { clienteId_sindicatoId: { clienteId: cliente.id, sindicatoId: sindicato.id } },
       update: { tipo: escolha.tipo, status: STATUS_SUGERIDO },
@@ -94,7 +95,7 @@ export async function listarEnquadramentos(clienteId?: string) {
 export async function validarEnquadramento(id: string) {
   const enquadramento = await prisma.enquadramentoSindical.findUnique({ where: { id } });
   if (!enquadramento) throw new Error('Enquadramento nao encontrado');
-  return prisma.enquadramentoSindical.update({ where: { id }, data: { status: STATUS_VALIDADO } });
+  return prisma.enquadramentoSindical.update({ where: { id }, data: { status: STATUS_VALIDADO, validadoEm: new Date() } });
 }
 
 export async function listarSindicatosMonitorados() {

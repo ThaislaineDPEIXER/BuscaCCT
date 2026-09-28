@@ -1,29 +1,63 @@
 import fs from 'node:fs';
-import { google, sheets_v4 } from 'googleapis';
+import { drive as createDriveClient } from '@googleapis/drive';
+import { auth, sheets as createSheetsClient, sheets_v4 } from '@googleapis/sheets';
 import { env } from '../config/env';
+import {
+  EMPRESA_HEADERS,
+  SINDICATO_HEADERS,
+  sanitizarEmpresas,
+  sanitizarSindicatos,
+  type EmpresaPlanilha,
+  type LinhaRejeitada,
+  type SindicatoPlanilha
+} from './adminSheetParser';
 
 const WORKSPACE_SCOPES = [
   'https://www.googleapis.com/auth/drive',
   'https://www.googleapis.com/auth/spreadsheets'
 ];
-const DASHBOARD_SHEET_TITLE = 'CCTs Extraídas';
-const DASHBOARD_HEADERS = ['Data', 'Sindicato/CNPJ', 'Link Drive', 'Resumo'];
-const REGISTRY_SHEET_TITLE = 'Cadastro de Sindicatos';
-const REGISTRY_HEADERS = ['CNPJ', 'Nome do Sindicato', 'UF', 'Categoria', 'Status de Monitorização'];
+export const SHEET_LAYOUT = {
+  painel: {
+    title: 'Painel de CCTs',
+    headers: ['Data', 'Empresa Vinculada', 'Sindicato Laboral', 'Resumo/Impacto', 'Link PDF']
+  },
+  matriz: {
+    title: 'Matriz de Enquadramento',
+    headers: ['CNPJ Empresa', 'Razão Social', 'CNAE', 'Sindicato Mapeado', 'Tipo', 'Grau', 'Status', 'Validado por', 'Data da Validação', 'Observações']
+  },
+  cadastro: {
+    title: 'Cadastro de Empresas',
+    headers: EMPRESA_HEADERS
+  },
+  sindicatos: {
+    title: 'Cadastro de Sindicatos',
+    headers: SINDICATO_HEADERS
+  }
+} as const;
 
+type SheetKey = keyof typeof SHEET_LAYOUT;
 type DashboardSheet = { sheetId: number; title: string };
-type AdminSheetStructure = { extracted: DashboardSheet; registry: DashboardSheet };
+type AdminSheetStructure = Record<SheetKey, DashboardSheet>;
+export type AdminSheetData = {
+  empresas: EmpresaPlanilha[];
+  sindicatos: SindicatoPlanilha[];
+  rejeitadas: LinhaRejeitada[];
+};
 
 function createAuth() {
-  return new google.auth.JWT({
+  return new auth.JWT({
     email: env.googleClientEmail,
     key: env.googlePrivateKey.replace(/\\n/g, '\n'),
     scopes: WORKSPACE_SCOPES
   });
 }
 
+function sheetsClient() {
+  return createSheetsClient({ version: 'v4', auth: createAuth() });
+}
+
 export async function uploadPdfToDrive(fileName: string, filePath: string, folderId: string): Promise<string> {
-  const drive = google.drive({ version: 'v3', auth: createAuth() });
+  const drive = createDriveClient({ version: 'v3', auth: createAuth() });
   const created = await drive.files.create({
     requestBody: {
       name: fileName,
@@ -48,15 +82,63 @@ export async function uploadPdfToDrive(fileName: string, filePath: string, folde
 }
 
 export async function appendRowToSheet(sheetId: string, values: string[]): Promise<void> {
-  const sheets = google.sheets({ version: 'v4', auth: createAuth() });
+  const sheets = sheetsClient();
   const dashboard = await ensureCctDashboard(sheetId);
   await sheets.spreadsheets.values.append({
     spreadsheetId: sheetId,
-    range: `'${dashboard.title}'!A:D`,
+    range: `'${dashboard.title}'!A:${columnLetter(SHEET_LAYOUT.painel.headers.length)}`,
     valueInputOption: 'USER_ENTERED',
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values: [values] }
   });
+}
+
+export async function syncEnquadramentoMatrix(sheetId: string, rows: string[][]): Promise<void> {
+  const sheets = sheetsClient();
+  const { matriz } = await ensureAdminSheetStructure(sheetId);
+  const lastColumn = columnLetter(SHEET_LAYOUT.matriz.headers.length);
+
+  try {
+    await sheets.spreadsheets.values.clear({ spreadsheetId: sheetId, range: `'${matriz.title}'!A2:${lastColumn}` });
+    if (rows.length > 0) {
+      await sheets.spreadsheets.values.update({
+        spreadsheetId: sheetId,
+        range: `'${matriz.title}'!A2`,
+        valueInputOption: 'RAW',
+        requestBody: { values: rows }
+      });
+    }
+    console.info(`[WORKSPACE] Matriz de enquadramento sincronizada (${rows.length} vínculos).`);
+  } catch (error) {
+    console.error('[WORKSPACE] Falha ao sincronizar a matriz de enquadramento:', error);
+    throw error;
+  }
+}
+
+export async function readAdminSheetData(sheetId: string): Promise<AdminSheetData> {
+  const sheets = sheetsClient();
+  const { cadastro, sindicatos } = await ensureAdminSheetStructure(sheetId);
+
+  try {
+    const leitura = await sheets.spreadsheets.values.batchGet({
+      spreadsheetId: sheetId,
+      ranges: [`'${cadastro.title}'!A:Z`, `'${sindicatos.title}'!A:Z`],
+      valueRenderOption: 'FORMATTED_VALUE'
+    });
+    const [valoresEmpresas, valoresSindicatos] = (leitura.data.valueRanges ?? []).map(range => range.values ?? undefined);
+    const empresas = sanitizarEmpresas(valoresEmpresas, cadastro.title);
+    const sindicatosLidos = sanitizarSindicatos(valoresSindicatos, sindicatos.title);
+
+    console.info(`[WORKSPACE] Cadastros lidos: ${empresas.registros.length} empresas, ${sindicatosLidos.registros.length} sindicatos.`);
+    return {
+      empresas: empresas.registros,
+      sindicatos: sindicatosLidos.registros,
+      rejeitadas: [...empresas.rejeitadas, ...sindicatosLidos.rejeitadas]
+    };
+  } catch (error) {
+    console.error('[WORKSPACE] Falha ao ler as abas de cadastro:', error);
+    throw error;
+  }
 }
 
 export function hasConditionalRule(rule: sheets_v4.Schema$ConditionalFormatRule, expectedText: string): boolean {
@@ -97,11 +179,8 @@ function headerFormatRequests(sheetId: number): sheets_v4.Schema$Request[] {
 }
 
 export async function ensureAdminSheetStructure(sheetId: string): Promise<AdminSheetStructure> {
-  const sheets = google.sheets({ version: 'v4', auth: createAuth() });
-  const layout = [
-    { title: DASHBOARD_SHEET_TITLE, headers: DASHBOARD_HEADERS },
-    { title: REGISTRY_SHEET_TITLE, headers: REGISTRY_HEADERS }
-  ];
+  const sheets = sheetsClient();
+  const layout = (Object.keys(SHEET_LAYOUT) as SheetKey[]).map(key => ({ key, ...SHEET_LAYOUT[key] }));
 
   try {
     const spreadsheet = await sheets.spreadsheets.get({
@@ -127,10 +206,10 @@ export async function ensureAdminSheetStructure(sheetId: string): Promise<AdminS
       console.info(`[WORKSPACE] Abas criadas: ${missing.map(({ title }) => title).join(', ')}.`);
     }
 
-    const resolved = layout.map(({ title, headers }) => {
+    const resolved = layout.map(({ key, title, headers }) => {
       const id = ids.get(title);
       if (id === undefined) throw new Error(`Não foi possível localizar ou criar a aba ${title}.`);
-      return { sheetId: id, title, headers, range: `'${title}'!A1:${columnLetter(headers.length)}1` };
+      return { key, sheetId: id, title, headers: [...headers], range: `'${title}'!A1:${columnLetter(headers.length)}1` };
     });
 
     const current = await sheets.spreadsheets.values.batchGet({
@@ -153,11 +232,9 @@ export async function ensureAdminSheetStructure(sheetId: string): Promise<AdminS
       requestBody: { requests: resolved.flatMap(({ sheetId: id }) => headerFormatRequests(id)) }
     });
 
-    const [extracted, registry] = resolved;
-    return {
-      extracted: { sheetId: extracted.sheetId, title: extracted.title },
-      registry: { sheetId: registry.sheetId, title: registry.title }
-    };
+    return Object.fromEntries(
+      resolved.map(({ key, sheetId: id, title }) => [key, { sheetId: id, title }])
+    ) as AdminSheetStructure;
   } catch (error) {
     console.error('[WORKSPACE] Falha ao preparar a estrutura da planilha:', error);
     throw error;
@@ -165,10 +242,10 @@ export async function ensureAdminSheetStructure(sheetId: string): Promise<AdminS
 }
 
 export async function ensureCctDashboard(sheetId: string): Promise<DashboardSheet> {
-  const sheets = google.sheets({ version: 'v4', auth: createAuth() });
+  const sheets = sheetsClient();
 
   try {
-    const { extracted } = await ensureAdminSheetStructure(sheetId);
+    const { painel: extracted } = await ensureAdminSheetStructure(sheetId);
     const dashboardSheetId = extracted.sheetId;
     const spreadsheet = await sheets.spreadsheets.get({
       spreadsheetId: sheetId,
