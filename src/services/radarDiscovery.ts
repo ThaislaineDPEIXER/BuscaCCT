@@ -181,8 +181,7 @@ export async function buscarCctNoSite(sindicatoId: string): Promise<{ cctId: str
   const documento = await storePdf(
     pdf,
     env.documentStoragePath,
-    `${sindicato.cnpj}-${anoVigencia}-${hashDocumento}.pdf`,
-    env.documentStorageDriver === 'gcs' ? env.gcsBucketName : undefined
+    `${sindicato.cnpj}-${anoVigencia}-${hashDocumento}.pdf`
   );
   const existente = await prisma.convencaoColetiva.findUnique({
     where: { cnpjSindicato_anoVigencia: { cnpjSindicato: sindicato.cnpj, anoVigencia } }

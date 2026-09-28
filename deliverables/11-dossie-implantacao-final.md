@@ -22,16 +22,14 @@ Validações concluídas:
 ## 2. Arquitetura de runtime
 
 ```text
-Cloud Load Balancer / Ingress
-        |
-        v
-API Express -- PostgreSQL / Cloud SQL
-        |             |
-        |             +-- migrations Prisma
-        |
-        +-- volume de documentos PDF
-        |
-Worker separado -- lock WorkerLock por CNPJ
+GitHub Actions (worker noturno) -- Supabase PostgreSQL
+  |                               |
+  |                               +-- migrations Prisma
+  |
+  +-- Google Drive (PDFs)
+  +-- Google Sheets (visibilidade operacional)
+  |
+Worker -- lock WorkerLock por CNPJ
         |
         +-- fila MTE com retry persistente
         +-- radar de sites sindicais
@@ -43,14 +41,15 @@ Worker separado -- lock WorkerLock por CNPJ
 ```env
 PORT=3000
 NODE_ENV=production
-DATABASE_URL=postgresql://usuario:senha@host:5432/radar_sindical?sslmode=require
-POSTGRES_DB=radar_sindical
-POSTGRES_USER=radar
-POSTGRES_PASSWORD=senha-do-ambiente
+DATABASE_URL=postgresql://pooler-transacao:6543/postgres?pgbouncer=true
+DIRECT_URL=postgresql://pooler-sessao:5432/postgres
 ANTHROPIC_API_KEY=token-real
 DOCUMENT_STORAGE_PATH=/app/data/documents
-DOCUMENT_STORAGE_DRIVER=gcs
-GCS_BUCKET_NAME=projeto-cct-pdfs
+DOCUMENT_STORAGE_DRIVER=workspace
+GOOGLE_CLIENT_EMAIL=service-account@projeto.iam.gserviceaccount.com
+GOOGLE_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\\n...\\n-----END PRIVATE KEY-----\\n"
+GOOGLE_DRIVE_FOLDER_ID=id-da-pasta
+GOOGLE_SHEET_ID=id-da-planilha
 PORTAL_AUTH_ENABLED=true
 PORTAL_API_KEY=chave-forte-do-portal
 CORS_ORIGINS=https://portal.empresa.com
@@ -162,7 +161,7 @@ Garantias:
 ## 7. Fluxo de CCT e evidência
 
 1. MTE ou site sindical fornece o documento.
-2. PDF original é salvo no filesystem local ou no bucket GCS selecionado por `DOCUMENT_STORAGE_DRIVER`.
+2. PDF original é salvo transitoriamente no filesystem local e, após a persistência da CCT, é enviado ao Google Drive.
 3. O hash SHA-256 é registrado.
 4. `EvidenciaCct` guarda URL, storage path e referência.
 5. `cctOcr.ts` transcreve o PDF.
@@ -170,7 +169,7 @@ Garantias:
 7. `cctExtractionPersistence.ts` grava impactos e contribuições.
 8. Registros já validados pelo DP são preservados.
 
-O storage suporta filesystem local (`DOCUMENT_STORAGE_DRIVER=local`) ou Google Cloud Storage (`DOCUMENT_STORAGE_DRIVER=gcs` e `GCS_BUCKET_NAME`). Em GCP, configure Application Default Credentials na identidade de runtime e conceda acesso ao bucket provisionado pelo Terraform; não distribua chaves JSON da service account. Para o worker no GitHub Actions, defina as variáveis `DOCUMENT_STORAGE_DRIVER`, `GCS_BUCKET_NAME`, `GCP_WORKLOAD_IDENTITY_PROVIDER` e `GCP_SERVICE_ACCOUNT` no repositório e configure o provedor Workload Identity Federation para confiar no repositório/branch correto. O modo local continua disponível para desenvolvimento e Docker Compose.
+O storage usa filesystem local em desenvolvimento (`DOCUMENT_STORAGE_DRIVER=local`) e Google Workspace no worker de produção (`DOCUMENT_STORAGE_DRIVER=workspace`). Os secrets `GOOGLE_CLIENT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_DRIVE_FOLDER_ID` e `GOOGLE_SHEET_ID` devem ficar no GitHub; a pasta Drive e a planilha precisam ser compartilhadas com a service account. O worker publica um link de leitura do PDF e uma linha de espelho na aba `CCTs` da planilha.
 
 ## 8. Worker
 
@@ -192,31 +191,7 @@ Características:
 - sucesso zera falhas
 - erro de um sindicato não derruba a fila
 
-## 9. Terraform GCP
-
-```bash
-cd infra/terraform
-terraform init
-terraform plan \
-  -var="project_id=PROJETO_GCP" \
-  -var="db_password=SENHA_FORTE" \
-  -var="bucket_name_suffix=cct-pdfs"
-terraform apply \
-  -var="project_id=PROJETO_GCP" \
-  -var="db_password=SENHA_FORTE" \
-  -var="bucket_name_suffix=cct-pdfs"
-```
-
-Antes do Go-Live, revisar obrigatoriamente:
-
-- `deletion_protection = true` no Cloud SQL
-- IAM mínimo para a Service Account
-- Secret Manager para tokens e senha
-- rede privada/Cloud SQL Auth Proxy
-- bucket sem exposição pública
-- backend remoto do Terraform com lock
-
-## 10. Rollback
+## 9. Rollback
 
 ```bash
 docker compose logs --tail=200 api worker

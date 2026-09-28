@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: agent-worker-${{ github.ref }}
@@ -33,13 +32,6 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Authenticate to Google Cloud
-        if: vars.DOCUMENT_STORAGE_DRIVER == 'gcs'
-        uses: google-github-actions/auth@v2
-        with:
-          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
-          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
-
       - name: Build project
         run: npm run build
 
@@ -47,8 +39,12 @@ jobs:
         env:
           NODE_ENV: production
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.DIRECT_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PORTAL_AUTH_ENABLED: ${{ secrets.PORTAL_AUTH_ENABLED }}
-          DOCUMENT_STORAGE_DRIVER: ${{ vars.DOCUMENT_STORAGE_DRIVER || 'local' }}
-          GCS_BUCKET_NAME: ${{ vars.GCS_BUCKET_NAME }}
+          DOCUMENT_STORAGE_DRIVER: workspace
+          GOOGLE_CLIENT_EMAIL: ${{ secrets.GOOGLE_CLIENT_EMAIL }}
+          GOOGLE_PRIVATE_KEY: ${{ secrets.GOOGLE_PRIVATE_KEY }}
+          GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
+          GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
         run: npm run start:worker

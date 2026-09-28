@@ -8,6 +8,8 @@ import { enviarDigest, gerarAlertasDataBase } from '../services/alertService';
 import { notificarFalhaMte } from '../services/operationalAlert';
 import { varrerSindicato } from '../services/radarDiscovery';
 import { adquirirWorkerLock } from '../services/workerLock';
+import { resolveStoredDocumentPath } from '../services/documentStorage';
+import { appendRowToSheet, uploadPdfToDrive } from '../services/googleWorkspace';
 import { buscarESalvarCCT } from '../tools/mteScraper';
 
 const pausar = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -24,6 +26,34 @@ export function calcularProximaTentativa(falhasConsecutivas: number, agora = new
 }
 
 let varreduraEmAndamento = false;
+
+async function publicarCctNoWorkspace(cnpjSindicato: string, anoVigencia: number, sindicatoNome: string): Promise<void> {
+  if (env.documentStorageDriver !== 'workspace') return;
+
+  const cct = await prisma.convencaoColetiva.findUnique({
+    where: { cnpjSindicato_anoVigencia: { cnpjSindicato, anoVigencia } },
+    select: { id: true, documentoStoragePath: true, resumoCct: true }
+  });
+  if (!cct?.documentoStoragePath) return;
+
+  const filePath = resolveStoredDocumentPath(env.documentStoragePath, cct.documentoStoragePath);
+  if (!filePath) return;
+  const linkPdf = await uploadPdfToDrive(cct.documentoStoragePath.split('/').pop() ?? 'cct.pdf', filePath, env.googleDriveFolderId);
+
+  await prisma.$transaction([
+    prisma.convencaoColetiva.update({ where: { id: cct.id }, data: { documentoStoragePath: linkPdf } }),
+    prisma.evidenciaCct.updateMany({
+      where: { convencaoColetivaId: cct.id, storagePath: cct.documentoStoragePath },
+      data: { storagePath: linkPdf, url: linkPdf, referencia: 'PDF original arquivado no Google Drive.' }
+    })
+  ]);
+  await appendRowToSheet(env.googleSheetId, [
+    new Date().toISOString(),
+    sindicatoNome,
+    cct.resumoCct ?? 'Resumo indisponivel.',
+    linkPdf
+  ]);
+}
 
 async function selecionarFila() {
   const agora = new Date();
@@ -75,6 +105,7 @@ export async function executarFilaMte(): Promise<void> {
         const parametros = await extrairCctComClaude(textoBruto);
 
         await persistirExtracaoCct(sindicato.cnpj, anoVigencia, parametros);
+        await publicarCctNoWorkspace(sindicato.cnpj, anoVigencia, sindicato.razaoSocial);
         await prisma.sindicato.update({
           where: { id: sindicato.id },
           data: { ultimaVarredura: new Date(), proximaTentativa: null, falhasConsecutivas: 0 }

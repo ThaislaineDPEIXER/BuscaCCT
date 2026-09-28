@@ -1,9 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { Storage } from '@google-cloud/storage';
-
-const gcsStorage = new Storage();
 
 export type StoredDocument = {
   storagePath: string;
@@ -14,30 +11,12 @@ export type StoredDocument = {
 export async function storePdf(
   buffer: Buffer,
   rootDirectory: string,
-  objectName: string,
-  gcsBucketName?: string,
-  storageClient: Pick<Storage, 'bucket'> = gcsStorage
+  objectName: string
 ): Promise<StoredDocument> {
   if (buffer.length === 0) throw new Error('Documento PDF vazio.');
   const hashSha256 = crypto.createHash('sha256').update(buffer).digest('hex');
   const safeObjectName = objectName.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const relativePath = gcsBucketName
-    ? path.posix.join('cct', safeObjectName)
-    : path.join('cct', safeObjectName);
-
-  if (gcsBucketName) {
-    const file = storageClient.bucket(gcsBucketName).file(relativePath);
-    await file.save(buffer, {
-      resumable: false,
-      metadata: { contentType: 'application/pdf', metadata: { sha256: hashSha256 } },
-      preconditionOpts: { ifGenerationMatch: 0 }
-    }).catch(error => {
-      if ((error as { code?: number }).code !== 412) throw error;
-    });
-
-    return { storagePath: `gs://${gcsBucketName}/${relativePath}`, hashSha256, bytes: buffer.length };
-  }
-
+  const relativePath = path.join('cct', safeObjectName);
   const absolutePath = path.join(rootDirectory, relativePath);
 
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
@@ -46,4 +25,11 @@ export async function storePdf(
   });
 
   return { storagePath: relativePath, hashSha256, bytes: buffer.length };
+}
+
+export function resolveStoredDocumentPath(rootDirectory: string, storagePath: string): string | null {
+  if (storagePath.startsWith('http://') || storagePath.startsWith('https://')) return null;
+  const absolutePath = path.resolve(rootDirectory, storagePath);
+  const rootPath = path.resolve(rootDirectory);
+  return absolutePath.startsWith(`${rootPath}${path.sep}`) ? absolutePath : null;
 }

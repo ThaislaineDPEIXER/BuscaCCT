@@ -21,12 +21,15 @@ function booleanEnv(name: string, fallback: boolean): boolean {
 }
 
 const documentStorageDriver = process.env.DOCUMENT_STORAGE_DRIVER ?? 'local';
-if (!['local', 'gcs'].includes(documentStorageDriver)) {
-  throw new Error('DOCUMENT_STORAGE_DRIVER deve ser local ou gcs');
+if (!['local', 'workspace'].includes(documentStorageDriver)) {
+  throw new Error('DOCUMENT_STORAGE_DRIVER deve ser local ou workspace');
 }
-const gcsBucketName = process.env.GCS_BUCKET_NAME ?? '';
-if (documentStorageDriver === 'gcs' && !gcsBucketName) {
-  throw new Error('GCS_BUCKET_NAME e obrigatorio quando DOCUMENT_STORAGE_DRIVER=gcs');
+const googleClientEmail = process.env.GOOGLE_CLIENT_EMAIL ?? '';
+const googlePrivateKey = process.env.GOOGLE_PRIVATE_KEY ?? '';
+const googleDriveFolderId = process.env.GOOGLE_DRIVE_FOLDER_ID ?? '';
+const googleSheetId = process.env.GOOGLE_SHEET_ID ?? '';
+if (documentStorageDriver === 'workspace' && [googleClientEmail, googlePrivateKey, googleDriveFolderId, googleSheetId].some(value => !value)) {
+  throw new Error('Credenciais e IDs do Google Workspace sao obrigatorios quando DOCUMENT_STORAGE_DRIVER=workspace');
 }
 
 export const env = {
@@ -81,5 +84,8 @@ export const env = {
   tiWebhookUrl: process.env.TI_WEBHOOK_URL ?? '',
   documentStoragePath: process.env.DOCUMENT_STORAGE_PATH ?? 'storage',
   documentStorageDriver,
-  gcsBucketName
+  googleClientEmail,
+  googlePrivateKey,
+  googleDriveFolderId,
+  googleSheetId
 };

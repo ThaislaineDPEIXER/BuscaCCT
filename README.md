@@ -58,7 +58,9 @@ Endpoints principais:
 
 As importações são idempotentes por hash do arquivo: reenviar o mesmo conteúdo retorna o lote original sem criar novas linhas. A persistência do lote, clientes e linhas ocorre em uma transação serializável; falhas durante o processamento fazem rollback da carga.
 
-PDFs capturados pelo MTE ou pelo fallback sindical recebem hash SHA-256 e têm sua localização registrada em `ConvencaoColetiva` e `EvidenciaCct`. O armazenamento local usa `DOCUMENT_STORAGE_PATH`; para produção com Google Cloud Storage, configure `DOCUMENT_STORAGE_DRIVER=gcs` e `GCS_BUCKET_NAME`. A aplicação usa Application Default Credentials da identidade de runtime, que deve ter permissão para criar objetos no bucket.
+PDFs capturados pelo MTE recebem hash SHA-256 e têm sua localização registrada em `ConvencaoColetiva` e `EvidenciaCct`. Em desenvolvimento, o arquivo fica temporariamente em `DOCUMENT_STORAGE_PATH`. No worker de produção, `DOCUMENT_STORAGE_DRIVER=workspace` envia o PDF ao Google Drive depois da persistência da CCT e registra no Google Sheets a data, sindicato, resumo e link de compartilhamento.
+
+Configure `GOOGLE_CLIENT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_DRIVE_FOLDER_ID` e `GOOGLE_SHEET_ID` como segredos do GitHub. Compartilhe a pasta do Drive e a planilha com o e-mail da service account, com permissão de edição. O worker publica links de leitura para os PDFs; confirme que essa política atende às regras de acesso da organização antes de ativá-lo.
 
 Após a transcrição, `src/services/claudeAgent.ts` valida um contrato JSON estrito com `impactos_folha` e `contribuicoes_sindicais`. O serviço `src/services/cctExtractionPersistence.ts` grava esses itens em `ImpactoFolha` e `ContribuicaoSindical` dentro de uma transação serializável, preservando evidências textuais e registros já validados pelo DP. O módulo `src/services/cctOcr.ts` permanece responsável exclusivamente pela transcrição de PDFs.
 
@@ -129,6 +131,10 @@ npm run typecheck
 npm run prisma:migrate
 npx prisma db seed
 ```
+
+### Supabase
+
+Para usar o pooler do Supabase, defina `DATABASE_URL` com a URL do pooler em modo transação (porta `6543` e `?pgbouncer=true`) e `DIRECT_URL` com a URL em modo sessão (porta `5432`). O Prisma usa `DATABASE_URL` nas consultas da aplicação e `DIRECT_URL` nas migrations. Configure ambas no `.env` local ou no gerenciador de segredos do ambiente; substitua o placeholder pela senha do banco e faça URL-encode de caracteres reservados. O `.env.example` mantém URLs locais para Docker Compose.
 
 ## Docker
 
