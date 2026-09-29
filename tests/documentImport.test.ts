@@ -98,6 +98,47 @@ test('lerCadastroSindicalExcel aceita cabeçalhos com pontuação e mostra os en
   );
 });
 
+test('lerCadastroSindicalExcel importa relatório de ERP em blocos Código:/Nome:/CNPJ:', () => {
+  const workbook = XLS.utils.book_new();
+  XLS.utils.book_append_sheet(workbook, XLS.utils.aoa_to_sheet([
+    ['RELATÓRIO CADASTRO DE SINDICATOS DOS EMPREGADOS', '', '', 'Página:', '1'],
+    ['Código:', '62', 'Apelido:', 'SINCOMEC', 'Nome:', 'SINDICATO DOS EMPREGADOS DO COMERCIO DE RIO DO SUL'],
+    ['CNPJ:', '85.787.562/0001-80', 'Tipo entidade:', '1 - Sindicato', 'Código entidade:', '000.004.162.97474-7'],
+    ['Cidade:', 'RIO DO SUL', 'Santa Catarina', '89160-000'],
+    ['Código:', '13', 'Apelido:', 'SINTRAVEST', 'Nome:', ''],
+    ['CNPJ:', '79.370.763/0001-84'],
+    ['Cidade:', 'JOINVILLE - SC'],
+    ['Código:', '29', 'Apelido:', 'SEM ESTADO', 'Nome:', 'SINDICATO SEM UF'],
+    ['CNPJ:', '84.437.367/0001-67'],
+    ['Cidade:', '', 'Paraná']
+  ]), 'Relatório');
+  const arquivo = XLS.write(workbook, { bookType: 'biff8', type: 'buffer' });
+  const coluna = (header: typeof SINDICATO_HEADERS[number]) => SINDICATO_HEADERS.indexOf(header);
+
+  const linhas = lerCadastroSindicalExcel(arquivo, { empresas: new Set(), sindicatos: new Set() }, 'dominio.xls');
+  assert.equal(linhas.sindicatos.length, 3);
+  const [primeiro, segundo, terceiro] = linhas.sindicatos;
+  assert.equal(primeiro[coluna('CNPJ')], '85787562000180');
+  assert.equal(primeiro[coluna('Nome do Sindicato')], 'SINDICATO DOS EMPREGADOS DO COMERCIO DE RIO DO SUL');
+  assert.equal(primeiro[coluna('Código Sindical')], '62');
+  assert.equal(primeiro[coluna('UF')], 'SC');
+  assert.equal(primeiro[coluna('Município')], 'RIO DO SUL');
+  assert.equal(segundo[coluna('Nome do Sindicato')], 'SINTRAVEST');
+  assert.deepEqual([segundo[coluna('UF')], segundo[coluna('Município')]], ['SC', 'JOINVILLE']);
+  assert.deepEqual([terceiro[coluna('UF')], terceiro[coluna('Município')]], ['PR', '']);
+});
+
+test('lerCadastroSindicalExcel rejeita bloco de relatório sem UF, sem inventar o estado', () => {
+  const workbook = XLS.utils.book_new();
+  XLS.utils.book_append_sheet(workbook, XLS.utils.aoa_to_sheet([
+    ['Código:', '62', 'Nome:', 'SINDICATO A'], ['CNPJ:', '85.787.562/0001-80'], ['Cidade:', 'RIO DO SUL', 'Santa Catarina'],
+    ['Código:', '7', 'Nome:', 'SINDICATO B'], ['CNPJ:', '79.370.763/0001-84'], ['Cidade:', 'JOINVILLE']
+  ]), 'Relatório');
+  const linhas = lerCadastroSindicalExcel(XLS.write(workbook, { bookType: 'biff8', type: 'buffer' }), { empresas: new Set(), sindicatos: new Set() }, 'dominio.xls');
+  assert.equal(linhas.sindicatos.length, 1);
+  assert.match(linhas.rejeitadas[0], /dominio\.xls: item 4 rejeitado \(UF inválida/);
+});
+
 test('lerCadastroSindicalExcel ignora aba anunciada sem conteúdo', () => {
   const workbook = XLS.utils.book_new();
   XLS.utils.book_append_sheet(workbook, XLS.utils.aoa_to_sheet([

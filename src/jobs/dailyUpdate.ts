@@ -69,20 +69,26 @@ async function sincronizarMatrizEnquadramento(): Promise<void> {
 }
 
 type SindicatoPainel = { cnpj: string; razaoSocial: string; codigoSindical: string | null };
+type EmpresaPainel = { razaoSocial: string; codigoErp: string | null; cctRegistro: string | null };
+
+const formatarCnpj = (cnpj: string) =>
+  /^\d{14}$/.test(cnpj) ? cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : cnpj;
 
 export function montarLinhaPainel(
   data: Date,
   sindicato: SindicatoPainel,
-  empresas: { razaoSocial: string; cnpj: string }[],
+  empresas: EmpresaPainel[],
   resumo: string,
   linkDrive: string
 ): string[] {
+  const registros = [...new Set(empresas.map(empresa => empresa.cctRegistro?.trim()).filter(Boolean))];
   return [
     data.toISOString(),
     sindicato.codigoSindical?.trim() || '-',
     sindicato.razaoSocial,
-    sindicato.cnpj,
-    empresas.map(empresa => `${empresa.razaoSocial} (${empresa.cnpj})`).join('; '),
+    formatarCnpj(sindicato.cnpj),
+    empresas.map(empresa => `${empresa.razaoSocial} (Cód: ${empresa.codigoErp?.trim() || '-'})`).join('; '),
+    registros.join('; ') || '-',
     resumo,
     linkDrive
   ];
@@ -117,7 +123,7 @@ async function publicarCctNoWorkspace(sindicato: SindicatoPainel, anoVigencia: n
   }
   const empresasVinculadas = await prisma.enquadramentoSindical.findMany({
     where: { sindicato: { cnpj: cnpjSindicato }, status: STATUS_ENQUADRAMENTO.CONFIRMADO },
-    select: { cliente: { select: { razaoSocial: true, cnpj: true } } },
+    select: { cliente: { select: { razaoSocial: true, codigoErp: true, cctRegistro: true } } },
     orderBy: { cliente: { razaoSocial: 'asc' } }
   });
   await appendRowToSheet(env.googleSheetId, montarLinhaPainel(

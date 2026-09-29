@@ -67,6 +67,95 @@ const COLUNAS_SINDICATO: Record<string, string[]> = {
   'Status de Monitorização': ['status de monitorizacao', 'status']
 };
 
+const ESTADOS: Record<string, string> = {
+  acre: 'AC', alagoas: 'AL', amapa: 'AP', amazonas: 'AM', bahia: 'BA', ceara: 'CE', 'distrito federal': 'DF',
+  'espirito santo': 'ES', goias: 'GO', maranhao: 'MA', 'mato grosso': 'MT', 'mato grosso do sul': 'MS',
+  'minas gerais': 'MG', para: 'PA', paraiba: 'PB', parana: 'PR', pernambuco: 'PE', piaui: 'PI',
+  'rio de janeiro': 'RJ', 'rio grande do norte': 'RN', 'rio grande do sul': 'RS', rondonia: 'RO',
+  roraima: 'RR', 'santa catarina': 'SC', 'sao paulo': 'SP', sergipe: 'SE', tocantins: 'TO'
+};
+const SIGLAS_UF = new Set(Object.values(ESTADOS));
+
+function ufDe(valor: string): string | undefined {
+  const texto = valor.trim();
+  if (texto.length === 2 && SIGLAS_UF.has(texto.toUpperCase())) return texto.toUpperCase();
+  return ESTADOS[normalizarCabecalho(texto)];
+}
+
+const ROTULOS_RELATORIO: Record<string, 'codigo' | 'apelido' | 'nome' | 'cnpj' | 'cidade' | 'uf'> = {
+  codigo: 'codigo', apelido: 'apelido', nome: 'nome', cnpj: 'cnpj', cidade: 'cidade', municipio: 'cidade', uf: 'uf', estado: 'uf'
+};
+
+type RegistroRelatorio = Partial<Record<'codigo' | 'apelido' | 'nome' | 'cnpj' | 'cidade' | 'uf', string>> & { linha: number };
+
+const ehRotulo = (celula: string) => /:\s*$/.test(celula);
+
+// Relatório de ERP (ex.: Domínio): um bloco por sindicato, iniciado por "Código:", com o valor à direita de cada rótulo.
+export function lerRelatorioSindical(valores: (string | number)[][]): { linhas: string[][]; numeros: number[] } {
+  const celulas = valores.map(linha => linha.map(celula => String(celula ?? '').trim()));
+  const valorDe = (r: number, c: number): string => {
+    const direita = celulas[r].slice(c + 1).find(Boolean) ?? '';
+    if (direita && !ehRotulo(direita)) return direita;
+    const abaixo = celulas[r + 1]?.[c] ?? '';
+    return abaixo && !ehRotulo(abaixo) ? abaixo : '';
+  };
+  const registros: RegistroRelatorio[] = [];
+  let atual: RegistroRelatorio | undefined;
+
+  celulas.forEach((linha, r) => linha.forEach((celula, c) => {
+    if (!ehRotulo(celula)) return;
+    const campo = ROTULOS_RELATORIO[normalizarCabecalho(celula)];
+    if (campo === 'codigo') registros.push(atual = { linha: r + 1 });
+    if (!campo || !atual) return;
+    const valor = valorDe(r, c);
+    if (campo === 'uf') {
+      atual.uf ??= ufDe(valor);
+    } else if (campo === 'cidade') {
+      const [, cidade, sigla] = valor.match(/^(.*?)\s*[-/]\s*([A-Za-z]{2})$/) ?? [];
+      const soEstado = valor.length > 2 && Boolean(ufDe(valor));
+      atual.cidade ??= soEstado ? undefined : (sigla && ufDe(sigla) ? cidade : valor) || undefined;
+      atual.uf ??= (sigla && ufDe(sigla)) || linha.slice(c + 1).map(ufDe).find(Boolean);
+    } else if (valor) {
+      atual[campo] ??= valor;
+    }
+  }));
+
+  return {
+    linhas: registros.map(registro => SINDICATO_HEADERS.map(header => ({
+      CNPJ: registro.cnpj ?? '',
+      'Nome do Sindicato': registro.nome ?? registro.apelido ?? '',
+      UF: registro.uf ?? '',
+      'Município': registro.cidade ?? '',
+      'Código Sindical': registro.codigo ?? ''
+    } as Record<string, string>)[header] ?? '')),
+    numeros: registros.map(registro => registro.linha)
+  };
+}
+
+function validarLinhasSindicais(
+  linhas: string[][],
+  numeros: number[],
+  existentes: { empresas: Set<string>; sindicatos: Set<string> },
+  origem: string
+): LinhasImportacao {
+  const resultado: LinhasImportacao = { empresas: [], sindicatos: [], rejeitadas: [], duplicadas: 0 };
+  const validacao = sanitizarSindicatos([SINDICATO_HEADERS.slice(), ...linhas], origem);
+  resultado.rejeitadas.push(...validacao.rejeitadas.map(item => `${origem}: item ${numeros[item.linha - 2] ?? item.linha} rejeitado (${item.motivo})`));
+  const vistos = new Set(existentes.sindicatos);
+  for (const sindicato of validacao.registros) {
+    if (vistos.has(sindicato.cnpj)) {
+      resultado.duplicadas++;
+    } else {
+      vistos.add(sindicato.cnpj);
+      resultado.sindicatos.push(linhaSindicato(sindicato));
+    }
+  }
+  if (resultado.sindicatos.length === 0 && resultado.duplicadas === 0) {
+    throw new Error(`${origem}: nenhum sindicato válido encontrado. ${resultado.rejeitadas.slice(0, 3).join('; ')}`);
+  }
+  return resultado;
+}
+
 export function lerCadastroSindicalExcel(
   arquivo: Buffer,
   existentes: { empresas: Set<string>; sindicatos: Set<string> },
@@ -86,6 +175,8 @@ export function lerCadastroSindicalExcel(
       return CAMPOS_OBRIGATORIOS.every(campo => COLUNAS_SINDICATO[campo].some(alias => nomes.has(alias)));
     });
     if (indice < 0) {
+      const relatorio = lerRelatorioSindical(valores);
+      if (relatorio.linhas.length > 0) return validarLinhasSindicais(relatorio.linhas, relatorio.numeros, existentes, origem);
       encontrados.push(resumirCabecalho(nome, valores));
       continue;
     }
@@ -93,24 +184,9 @@ export function lerCadastroSindicalExcel(
     const colunas = SINDICATO_HEADERS.map(header => cabecalho.findIndex(celula => COLUNAS_SINDICATO[header]?.includes(celula)));
     const linhas = valores.slice(indice + 1).map(linha => colunas.map(coluna => coluna < 0 ? '' : String(linha[coluna] ?? '')));
     if (linhas.length === 0) throw new Error(`${origem}: a planilha não contém cadastros abaixo do cabeçalho.`);
-    const resultado = montarLinhasImportacao({ empresas: [], sindicatos: [] }, existentes, origem);
-    const validacao = sanitizarSindicatos([SINDICATO_HEADERS.slice(), ...linhas], origem);
-    resultado.rejeitadas.push(...validacao.rejeitadas.map(item => `${origem}: item ${item.linha + indice} rejeitado (${item.motivo})`));
-    const vistos = new Set(existentes.sindicatos);
-    for (const sindicato of validacao.registros) {
-      if (vistos.has(sindicato.cnpj)) {
-        resultado.duplicadas++;
-      } else {
-        vistos.add(sindicato.cnpj);
-        resultado.sindicatos.push(linhaSindicato(sindicato));
-      }
-    }
-    if (resultado.sindicatos.length === 0 && resultado.duplicadas === 0) {
-      throw new Error(`${origem}: nenhum sindicato válido encontrado. ${resultado.rejeitadas.slice(0, 3).join('; ')}`);
-    }
-    return resultado;
+    return validarLinhasSindicais(linhas, linhas.map((_, i) => indice + 2 + i), existentes, origem);
   }
-  throw new Error(`${origem}: nenhuma aba possui as colunas CNPJ, Nome do Sindicato e UF. Cabeçalhos encontrados: ${encontrados.join('; ') || 'nenhuma aba legível'}.`);
+  throw new Error(`${origem}: nenhuma aba possui as colunas CNPJ, Nome do Sindicato e UF nem blocos "Código:" de relatório. Cabeçalhos encontrados: ${encontrados.join('; ') || 'nenhuma aba legível'}.`);
 }
 
 export const SYSTEM_PROMPT_CADASTROS = `Você extrai dados cadastrais de documentos brasileiros (cartão CNPJ, contrato social, listas de clientes, cadastros sindicais, CCTs).

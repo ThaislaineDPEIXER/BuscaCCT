@@ -7,14 +7,19 @@ import { rotuloStatusEnquadramento } from '../src/services/enquadramentoStatus';
 
 test('montarLinhaPainel separa código, nome e CNPJ do sindicato na ordem do cabeçalho', () => {
   const data = new Date('2026-09-29T06:00:00.000Z');
-  const empresas = [{ razaoSocial: 'ACME LTDA', cnpj: '12345678000195' }, { razaoSocial: 'BETA SA', cnpj: '98765432000100' }];
-  const linha = montarLinhaPainel(data, { cnpj: '11222333000181', razaoSocial: 'SINCOMEC', codigoSindical: ' 62 ' }, empresas, 'Sem alteração', 'https://drive/x');
+  const empresas = [
+    { razaoSocial: 'ACME LTDA', codigoErp: '1586/5', cctRegistro: 'SC000123/2026' },
+    { razaoSocial: 'BETA SA', codigoErp: null, cctRegistro: 'SC000123/2026' }
+  ];
+  const linha = montarLinhaPainel(data, { cnpj: '85787562000180', razaoSocial: 'SINCOMEC', codigoSindical: ' 62 ' }, empresas, 'Sem alteração', 'https://drive/x');
   assert.equal(linha.length, SHEET_LAYOUT.painel.headers.length);
   assert.deepEqual(linha, [
-    '2026-09-29T06:00:00.000Z', '62', 'SINCOMEC', '11222333000181',
-    'ACME LTDA (12345678000195); BETA SA (98765432000100)', 'Sem alteração', 'https://drive/x'
+    '2026-09-29T06:00:00.000Z', '62', 'SINCOMEC', '85.787.562/0001-80',
+    'ACME LTDA (Cód: 1586/5); BETA SA (Cód: -)', 'SC000123/2026', 'Sem alteração', 'https://drive/x'
   ]);
-  assert.equal(montarLinhaPainel(data, { cnpj: '1', razaoSocial: 'X', codigoSindical: null }, [], '', '')[1], '-');
+  const semDados = montarLinhaPainel(data, { cnpj: '1', razaoSocial: 'X', codigoSindical: null }, [], '', '');
+  assert.equal(semDados[1], '-');
+  assert.equal(semDados[5], '-');
 });
 
 test('descreverImpacto gera o texto que aciona as cores do painel', () => {
