@@ -1,4 +1,5 @@
 import * as XLS from '@e965/xlsx';
+import { parse as parseCsv } from 'csv-parse/sync';
 import {
   EMPRESA_HEADERS,
   SINDICATO_HEADERS,
@@ -208,6 +209,30 @@ export function lerCadastroSindicalExcel(
   }
   const detalhe = encontrados.length > 0 ? `Cabeçalhos encontrados: ${encontrados.join('; ')}` : `Nenhuma aba legível (${diagnosticarArquivo(arquivo, workbook)})`;
   throw new Error(`${origem}: nenhuma aba possui as colunas CNPJ, Nome do Sindicato e UF nem blocos "Código:" de relatório. ${detalhe}.`);
+}
+
+export function lerCadastroSindicalCsv(
+  arquivo: Buffer,
+  existentes: { empresas: Set<string>; sindicatos: Set<string> },
+  origem: string
+): LinhasImportacao {
+  const texto = new TextDecoder('windows-1252').decode(arquivo).replace(/^\uFEFF/, '');
+  const candidatos = [',', ';', '\t'].flatMap(delimiter => {
+    try {
+      const valores = parseCsv(texto, { delimiter, relax_column_count: true, relax_quotes: true, skip_empty_lines: false, bom: true }) as string[][];
+      const blocos = valores.filter(linha => normalizarCabecalho(linha.find(celula => celula.trim()) ?? '') === 'codigo').length;
+      return [{ valores, blocos }];
+    } catch {
+      return [];
+    }
+  }).sort((a, b) => b.blocos - a.blocos);
+
+  const melhor = candidatos[0];
+  if (!melhor || melhor.blocos === 0) {
+    throw new Error(`${origem}: CSV inválido ou sem blocos "Código:" do relatório sindical.`);
+  }
+  const relatorio = lerRelatorioSindical(melhor.valores);
+  return validarLinhasSindicais(relatorio.linhas, relatorio.numeros, existentes, origem);
 }
 
 export const SYSTEM_PROMPT_CADASTROS = `Você extrai dados cadastrais de documentos brasileiros (cartão CNPJ, contrato social, listas de clientes, cadastros sindicais, CCTs).

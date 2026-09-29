@@ -139,8 +139,11 @@ export async function listarDocumentosPendentes(folderId: string, reprocessarPla
       });
       for (const arquivo of pagina.data.files ?? []) {
         if (arquivo.appProperties?.[PROPRIEDADE_IMPORTACAO] === 'erro' && ![
-          'application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-        ].includes(arquivo.mimeType ?? '')) continue;
+          'application/vnd.ms-excel',
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+          'text/csv',
+          'application/csv'
+        ].includes(arquivo.mimeType ?? '') && !arquivo.name?.toLowerCase().endsWith('.csv')) continue;
         if (arquivo.id && arquivo.name) {
           documentos.push({ id: arquivo.id, nome: arquivo.name, mimeType: arquivo.mimeType ?? '', tamanho: Number(arquivo.size ?? 0) });
         }

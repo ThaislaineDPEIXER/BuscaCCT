@@ -99,6 +99,7 @@ test('reprocessamento manual inclui apenas planilhas sindicais com erro', async 
         if (q.includes("'entrada' in parents")) return { data: { files: [] } };
         return { data: { files: [
           { id: 'xls', name: 'sindicatos.xls', mimeType: 'application/vnd.ms-excel', appProperties: { radarImportacao: 'erro' } },
+          { id: 'csv', name: 'sindicatos.csv', mimeType: 'text/csv', appProperties: { radarImportacao: 'erro' } },
           { id: 'pdf', name: 'cartao.pdf', mimeType: 'application/pdf', appProperties: { radarImportacao: 'erro' } }
         ] } };
       }
@@ -106,7 +107,7 @@ test('reprocessamento manual inclui apenas planilhas sindicais com erro', async 
   }) as never);
   try {
     const documentos = await listarDocumentosPendentes('entrada', true);
-    assert.deepEqual(documentos.map(item => item.nome), ['sindicatos.xls']);
+    assert.deepEqual(documentos.map(item => item.nome), ['sindicatos.xls', 'sindicatos.csv']);
     assert.ok(consultas.some(q => q.includes("'subpasta' in parents") && !q.includes("value='erro'")));
     assert.ok(consultas.some(q => q.includes("'entrada' in parents") && q.includes("value='erro'")));
   } finally {

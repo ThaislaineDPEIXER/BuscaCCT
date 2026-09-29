@@ -1,7 +1,7 @@
 import { env } from '../config/env';
 import { prisma } from '../db';
 import { mimeSuportado } from '../services/aiDocumentReader';
-import { extrairCadastrosDeDocumento, lerCadastroSindicalExcel, montarLinhasImportacao } from '../services/documentImport';
+import { extrairCadastrosDeDocumento, lerCadastroSindicalCsv, lerCadastroSindicalExcel, montarLinhasImportacao } from '../services/documentImport';
 import {
   appendAdminRows,
   baixarArquivoDrive,
@@ -46,15 +46,17 @@ export async function importarDocumentosDoDrive(): Promise<ResumoImportacaoDocum
   for (const documento of pendentes) {
     try {
       const excel = ['application/vnd.ms-excel', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'].includes(documento.mimeType);
+      const csv = ['text/csv', 'application/csv'].includes(documento.mimeType) || documento.nome.toLowerCase().endsWith('.csv');
       if (documento.tamanho > TAMANHO_MAXIMO_BYTES) {
         throw new Error(`Arquivo acima de ${TAMANHO_MAXIMO_BYTES / 1024 / 1024} MB.`);
       }
 
-      if (!excel && !mimeSuportado(documento.mimeType)) {
-        throw new Error(`Tipo de arquivo não suportado (${documento.mimeType || 'desconhecido'}). Use XLS, XLSX, PDF, PNG, JPEG ou WEBP.`);
+      if (!excel && !csv && !mimeSuportado(documento.mimeType)) {
+        throw new Error(`Tipo de arquivo não suportado (${documento.mimeType || 'desconhecido'}). Use CSV, XLS, XLSX, PDF, PNG, JPEG ou WEBP.`);
       }
       const arquivo = await baixarArquivoDrive(documento.id);
-      const linhas = excel ? lerCadastroSindicalExcel(arquivo, existentes, documento.nome)
+      const linhas = csv ? lerCadastroSindicalCsv(arquivo, existentes, documento.nome)
+        : excel ? lerCadastroSindicalExcel(arquivo, existentes, documento.nome)
         : mimeSuportado(documento.mimeType)
           ? montarLinhasImportacao(await extrairCadastrosDeDocumento(arquivo, documento.mimeType), existentes, documento.nome)
           : undefined;

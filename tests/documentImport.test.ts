@@ -4,7 +4,7 @@ import * as XLS from '@e965/xlsx';
 
 import { EMPRESA_HEADERS, SINDICATO_HEADERS } from '../src/services/adminSheetParser';
 import { mimeSuportado } from '../src/services/aiDocumentReader';
-import { interpretarExtracao, montarLinhasImportacao, lerCadastroSindicalExcel } from '../src/services/documentImport';
+import { interpretarExtracao, montarLinhasImportacao, lerCadastroSindicalCsv, lerCadastroSindicalExcel } from '../src/services/documentImport';
 
 const coluna = (header: typeof EMPRESA_HEADERS[number]) => EMPRESA_HEADERS.indexOf(header);
 
@@ -126,6 +126,37 @@ test('lerCadastroSindicalExcel importa relatório de ERP em blocos Código:/Nome
   assert.equal(segundo[coluna('Nome do Sindicato')], 'SINTRAVEST');
   assert.deepEqual([segundo[coluna('UF')], segundo[coluna('Município')]], ['SC', 'JOINVILLE']);
   assert.deepEqual([terceiro[coluna('UF')], terceiro[coluna('Município')]], ['PR', '']);
+});
+
+test('lerCadastroSindicalCsv lê o relatório esparso em Windows-1252 e converte o estado', () => {
+  const csv = [
+    'RELATÓRIO CADASTRO DE SINDICATOS DOS EMPREGADOS,,,,,,,,,,,,Página:, ,1',
+    'Código:,,,,2,,,,,,,,,,',
+    'Apelido:,,,,,,,,,,,,,,',
+    'Nome:,,,,SINDICATO DOS EMPREGADOS NA IND METALURGICA DE TIMBO,,,,,,,,,,',
+    'CNPJ:,,,,,,,86.379.211/0001-00,,,,,,,',
+    'Tipo entidade:,,,,,,,1 - Sindicato,,,,,,,',
+    'Código entidade:,,,,,,,000.011.163.13074-0,,,,,,,',
+    'Cidade:,,,,,,,TIMBÓ,,,,,,,',
+    'Estado:,,,,,,,,Santa Catarina,,,,,,',
+    'Código:,,,,1586,,,,,,,,,,',
+    'Apelido:,,,,SINDPD,,,,,,,,,,',
+    'Nome:,,,,SINDPD/SC - SIND DOS EMPREGADOS EM EMPRESAS DE PROCESSAMENTOS DE DADOS DE SC,,,,,,,,,,',
+    'CNPJ:,,,,,,,79.831.442/0001-30,,,,,,,',
+    'Cidade:,,,,,,,Florianópolis,,,,,,,',
+    'Estado:,,,,,,,,Santa Catarina,,,,,,'
+  ].join('\r\n');
+  const linhas = lerCadastroSindicalCsv(Buffer.from(csv, 'latin1'), { empresas: new Set(), sindicatos: new Set() }, 'dominio.csv');
+  const colunaSindicato = (header: typeof SINDICATO_HEADERS[number]) => SINDICATO_HEADERS.indexOf(header);
+
+  assert.equal(linhas.sindicatos.length, 2);
+  assert.equal(linhas.sindicatos[0][colunaSindicato('Código Sindical')], '2');
+  assert.equal(linhas.sindicatos[0][colunaSindicato('Nome do Sindicato')], 'SINDICATO DOS EMPREGADOS NA IND METALURGICA DE TIMBO');
+  assert.equal(linhas.sindicatos[0][colunaSindicato('CNPJ')], '86379211000100');
+  assert.equal(linhas.sindicatos[0][colunaSindicato('UF')], 'SC');
+  assert.equal(linhas.sindicatos[0][colunaSindicato('Município')], 'TIMBÓ');
+  assert.equal(linhas.sindicatos[1][colunaSindicato('Código Sindical')], '1586');
+  assert.equal(linhas.sindicatos[1][colunaSindicato('UF')], 'SC');
 });
 
 test('lerCadastroSindicalExcel rejeita bloco de relatório sem UF, sem inventar o estado', () => {
