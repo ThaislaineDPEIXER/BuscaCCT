@@ -21,7 +21,7 @@ const WORKSPACE_SCOPES = [
 export const SHEET_LAYOUT = {
   painel: {
     title: 'Painel de CCTs',
-    headers: ['Data', 'Empresa Vinculada', 'Sindicato Laboral', 'Resumo/Impacto', 'Link PDF']
+    headers: ['Data', 'Código Sindicato', 'Nome do Sindicato', 'CNPJ Sindicato', 'Empresa Vinculada', 'Resumo/Impacto', 'Link Drive']
   },
   matriz: {
     title: 'Matriz de Enquadramento',
@@ -38,7 +38,7 @@ export const SHEET_LAYOUT = {
 } as const;
 
 type SheetKey = keyof typeof SHEET_LAYOUT;
-type DashboardSheet = { sheetId: number; title: string };
+type DashboardSheet = { sheetId: number; title: string; headers: string[] };
 type AdminSheetStructure = Record<SheetKey, DashboardSheet>;
 export type AdminSheetData = {
   empresas: EmpresaPlanilha[];
@@ -83,15 +83,16 @@ export async function uploadPdfToDrive(fileName: string, filePath: string, folde
   return created.data.webViewLink ?? `https://drive.google.com/file/d/${fileId}/view`;
 }
 
+// values segue a ordem de SHEET_LAYOUT.painel.headers; a gravação usa o cabeçalho real da aba.
 export async function appendRowToSheet(sheetId: string, values: string[]): Promise<void> {
   const sheets = sheetsClient();
   const dashboard = await ensureCctDashboard(sheetId);
   await sheets.spreadsheets.values.append({
     spreadsheetId: sheetId,
-    range: `'${dashboard.title}'!A:${columnLetter(SHEET_LAYOUT.painel.headers.length)}`,
-    valueInputOption: 'USER_ENTERED',
+    range: `'${dashboard.title}'!A:${columnLetter(dashboard.headers.length)}`,
+    valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
-    requestBody: { values: [values] }
+    requestBody: { values: alinharAoCabecalho([values], SHEET_LAYOUT.painel.headers, dashboard.headers) }
   });
 }
 
@@ -237,14 +238,31 @@ export async function readAdminSheetData(sheetId: string): Promise<AdminSheetDat
   }
 }
 
-export function hasConditionalRule(rule: sheets_v4.Schema$ConditionalFormatRule, expectedText: string): boolean {
-  const appliesToSummary = rule.ranges?.some(range => range.startColumnIndex === 3 && range.endColumnIndex === 4);
+export function hasConditionalRule(rule: sheets_v4.Schema$ConditionalFormatRule, expectedText: string, columnIndex: number): boolean {
+  const appliesToSummary = rule.ranges?.some(range => range.startColumnIndex === columnIndex && range.endColumnIndex === columnIndex + 1);
   const condition = rule.booleanRule?.condition;
   return Boolean(appliesToSummary && condition?.values?.some(value => typeof value.userEnteredValue === 'string' && value.userEnteredValue.includes(expectedText)));
 }
 
+// Só reconhece as regras que o robô cria, para nunca apagar regras feitas pela equipe.
+export function isSummaryRule(rule: sheets_v4.Schema$ConditionalFormatRule): boolean {
+  const condition = rule.booleanRule?.condition;
+  return Boolean(condition?.values?.some(({ userEnteredValue: value }) => typeof value === 'string' && (
+    (condition.type === 'CUSTOM_FORMULA' && /REGEXMATCH\(\$[A-Z]+2,"(Aumento|Alerta)"\)/.test(value)) ||
+    (condition.type === 'TEXT_CONTAINS' && value === 'Sem alteração')
+  )));
+}
+
 export function dashboardNeedsHeaders(values: string[][] | undefined): boolean {
   return !values?.[0]?.some(value => value.trim());
+}
+
+// Sem linhas de dados o layout é trocado; com dados, só acrescenta ao fim as colunas que faltam.
+export function cabecalhoDoPainel(atual: string[], temDados: boolean, esperado: readonly string[]): string[] | null {
+  if (temDados) return completarCabecalho(atual, esperado);
+  const preenchido = atual.map(valor => valor.trim());
+  while (preenchido.length > 0 && !preenchido[preenchido.length - 1]) preenchido.pop();
+  return preenchido.join('\u0000') === esperado.join('\u0000') ? null : [...esperado];
 }
 
 function columnLetter(count: number): string {
@@ -305,25 +323,37 @@ export async function ensureAdminSheetStructure(sheetId: string): Promise<AdminS
     const resolved = layout.map(({ key, title, headers }) => {
       const id = ids.get(title);
       if (id === undefined) throw new Error(`Não foi possível localizar ou criar a aba ${title}.`);
-      return { key, sheetId: id, title, headers: [...headers] as string[], range: `'${title}'!1:1` };
+      return { key, sheetId: id, title, headers: [...headers] as string[], range: `'${title}'!${key === 'painel' ? '1:2' : '1:1'}` };
     });
 
     const current = await sheets.spreadsheets.values.batchGet({
       spreadsheetId: sheetId,
       ranges: resolved.map(({ range }) => range)
     });
-    const pendingHeaders = resolved.flatMap(({ key, title, headers }, index) => {
-      const atual = (current.data.valueRanges?.[index]?.values?.[0] ?? []).map(valor => String(valor ?? ''));
+    const finais = resolved.map(({ key, title, headers }, index) => {
+      const linhas = current.data.valueRanges?.[index]?.values ?? [];
+      const atual = (linhas[0] ?? []).map(valor => String(valor ?? ''));
+      const preenchidas = atual.filter(valor => valor.trim()).length;
+      let novo: string[] | null;
       if (key === 'cadastro' || key === 'sindicatos') {
-        const completo = completarCabecalho(atual, headers);
-        if (!completo) return [];
-        if (atual.some(valor => valor.trim())) {
-          console.warn(`[WORKSPACE] Aba ${title}: colunas acrescentadas ao cabeçalho: ${completo.slice(atual.filter(valor => valor.trim()).length).join(', ')}.`);
+        novo = completarCabecalho(atual, headers);
+        if (novo && preenchidas > 0) {
+          console.warn(`[WORKSPACE] Aba ${title}: colunas acrescentadas ao cabeçalho: ${novo.slice(preenchidas).join(', ')}.`);
         }
-        return [{ range: `'${title}'!A1`, values: [completo] }];
+      } else if (key === 'painel') {
+        const temDados = (linhas[1] ?? []).some(valor => String(valor ?? '').trim());
+        novo = cabecalhoDoPainel(atual, temDados, headers);
+        if (novo && preenchidas > 0) {
+          console.warn(temDados
+            ? `[WORKSPACE] Aba ${title}: colunas acrescentadas ao cabeçalho: ${novo.slice(preenchidas).join(', ')}.`
+            : `[WORKSPACE] Aba ${title}: cabeçalho atualizado para o novo layout.`);
+        }
+      } else {
+        novo = dashboardNeedsHeaders([atual]) ? headers : null;
       }
-      return dashboardNeedsHeaders([atual]) ? [{ range: `'${title}'!A1`, values: [headers] }] : [];
+      return { novo, header: novo ?? atual };
     });
+    const pendingHeaders = finais.flatMap(({ novo }, index) => (novo ? [{ range: `'${resolved[index].title}'!A1`, values: [novo] }] : []));
     if (pendingHeaders.length > 0) {
       await sheets.spreadsheets.values.batchUpdate({
         spreadsheetId: sheetId,
@@ -337,7 +367,7 @@ export async function ensureAdminSheetStructure(sheetId: string): Promise<AdminS
     });
 
     return Object.fromEntries(
-      resolved.map(({ key, sheetId: id, title }) => [key, { sheetId: id, title }])
+      resolved.map(({ key, sheetId: id, title }, index) => [key, { sheetId: id, title, headers: finais[index].header }])
     ) as AdminSheetStructure;
   } catch (error) {
     console.error('[WORKSPACE] Falha ao preparar a estrutura da planilha:', error);
@@ -358,16 +388,24 @@ export async function ensureCctDashboard(sheetId: string): Promise<DashboardShee
     const existingRules = spreadsheet.data.sheets
       ?.find(sheet => sheet.properties?.sheetId === dashboardSheetId)
       ?.conditionalFormats ?? [];
-    const requests: sheets_v4.Schema$Request[] = [];
+    const resumo = extracted.headers.findIndex(header => header.trim() === 'Resumo/Impacto');
+    if (resumo < 0) throw new Error(`Aba ${extracted.title} sem a coluna Resumo/Impacto.`);
+    const letraResumo = columnLetter(resumo + 1);
+    const naColunaResumo = (rule: sheets_v4.Schema$ConditionalFormatRule) =>
+      Boolean(rule.ranges?.some(range => range.startColumnIndex === resumo && range.endColumnIndex === resumo + 1));
+    const requests: sheets_v4.Schema$Request[] = existingRules
+      .flatMap((rule, index) => (isSummaryRule(rule) && !naColunaResumo(rule) ? [index] : []))
+      .reverse()
+      .map(index => ({ deleteConditionalFormatRule: { sheetId: dashboardSheetId, index } }));
 
-    if (!existingRules.some(rule => hasConditionalRule(rule, 'Aumento') || hasConditionalRule(rule, 'Alerta'))) {
+    if (!existingRules.some(rule => hasConditionalRule(rule, 'Aumento', resumo) || hasConditionalRule(rule, 'Alerta', resumo))) {
       requests.push({
         addConditionalFormatRule: {
           index: 0,
           rule: {
-            ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, startColumnIndex: 3, endColumnIndex: 4 }],
+            ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, startColumnIndex: resumo, endColumnIndex: resumo + 1 }],
             booleanRule: {
-              condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: '=OR(REGEXMATCH($D2,"Aumento"),REGEXMATCH($D2,"Alerta"))' }] },
+              condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: `=OR(REGEXMATCH($${letraResumo}2,"Aumento"),REGEXMATCH($${letraResumo}2,"Alerta"))` }] },
               format: { backgroundColor: { red: 1, green: 0.8, blue: 0.8 } }
             }
           }
@@ -375,12 +413,12 @@ export async function ensureCctDashboard(sheetId: string): Promise<DashboardShee
       });
     }
 
-    if (!existingRules.some(rule => hasConditionalRule(rule, 'Sem alteração'))) {
+    if (!existingRules.some(rule => hasConditionalRule(rule, 'Sem alteração', resumo))) {
       requests.push({
         addConditionalFormatRule: {
           index: 0,
           rule: {
-            ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, startColumnIndex: 3, endColumnIndex: 4 }],
+            ranges: [{ sheetId: dashboardSheetId, startRowIndex: 1, startColumnIndex: resumo, endColumnIndex: resumo + 1 }],
             booleanRule: {
               condition: { type: 'TEXT_CONTAINS', values: [{ userEnteredValue: 'Sem alteração' }] },
               format: { backgroundColor: { red: 0.8, green: 0.94, blue: 0.8 } }

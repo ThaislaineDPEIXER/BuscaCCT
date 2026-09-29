@@ -68,8 +68,29 @@ async function sincronizarMatrizEnquadramento(): Promise<void> {
   ]));
 }
 
-async function publicarCctNoWorkspace(cnpjSindicato: string, anoVigencia: number, sindicatoNome: string): Promise<void> {
+type SindicatoPainel = { cnpj: string; razaoSocial: string; codigoSindical: string | null };
+
+export function montarLinhaPainel(
+  data: Date,
+  sindicato: SindicatoPainel,
+  empresas: { razaoSocial: string; cnpj: string }[],
+  resumo: string,
+  linkDrive: string
+): string[] {
+  return [
+    data.toISOString(),
+    sindicato.codigoSindical?.trim() || '-',
+    sindicato.razaoSocial,
+    sindicato.cnpj,
+    empresas.map(empresa => `${empresa.razaoSocial} (${empresa.cnpj})`).join('; '),
+    resumo,
+    linkDrive
+  ];
+}
+
+async function publicarCctNoWorkspace(sindicato: SindicatoPainel, anoVigencia: number): Promise<void> {
   if (env.documentStorageDriver !== 'workspace') return;
+  const cnpjSindicato = sindicato.cnpj;
 
   const cct = await prisma.convencaoColetiva.findUnique({
     where: { cnpjSindicato_anoVigencia: { cnpjSindicato, anoVigencia } },
@@ -99,13 +120,13 @@ async function publicarCctNoWorkspace(cnpjSindicato: string, anoVigencia: number
     select: { cliente: { select: { razaoSocial: true, cnpj: true } } },
     orderBy: { cliente: { razaoSocial: 'asc' } }
   });
-  await appendRowToSheet(env.googleSheetId, [
-    new Date().toISOString(),
-    empresasVinculadas.map(({ cliente }) => `${cliente.razaoSocial} (${cliente.cnpj})`).join('; '),
-    `${sindicatoNome} (${cnpjSindicato})`,
+  await appendRowToSheet(env.googleSheetId, montarLinhaPainel(
+    new Date(),
+    sindicato,
+    empresasVinculadas.map(({ cliente }) => cliente),
     descreverImpacto(cct._count.impactosFolha, cct.resumoCct),
     linkPdf
-  ]);
+  ));
 }
 
 async function selecionarFila() {
@@ -128,7 +149,7 @@ async function selecionarFila() {
     },
     orderBy: [{ ultimaVarredura: 'asc' }, { atualizadoEm: 'asc' }],
     take: env.mteBatchSize,
-    select: { id: true, cnpj: true, razaoSocial: true, mesDataBase: true, falhasConsecutivas: true }
+    select: { id: true, cnpj: true, razaoSocial: true, codigoSindical: true, mesDataBase: true, falhasConsecutivas: true }
   });
 }
 
@@ -176,7 +197,7 @@ export async function executarFilaMte(): Promise<void> {
         const parametros = await extrairCctComIa(textoBruto);
 
         await persistirExtracaoCct(sindicato.cnpj, anoVigencia, parametros);
-        await publicarCctNoWorkspace(sindicato.cnpj, anoVigencia, sindicato.razaoSocial);
+        await publicarCctNoWorkspace(sindicato, anoVigencia);
         await prisma.sindicato.update({
           where: { id: sindicato.id },
           data: { ultimaVarredura: new Date(), proximaTentativa: null, falhasConsecutivas: 0 }

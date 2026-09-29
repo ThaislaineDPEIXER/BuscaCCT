@@ -3,7 +3,15 @@ import test from 'node:test';
 import { mock } from 'node:test';
 import * as googleDrive from '@googleapis/drive';
 
-import { dashboardNeedsHeaders, hasConditionalRule, listarDocumentosPendentes } from '../src/services/googleWorkspace';
+import { alinharAoCabecalho } from '../src/services/adminSheetParser';
+import {
+  SHEET_LAYOUT,
+  cabecalhoDoPainel,
+  dashboardNeedsHeaders,
+  hasConditionalRule,
+  isSummaryRule,
+  listarDocumentosPendentes
+} from '../src/services/googleWorkspace';
 
 test('dashboardNeedsHeaders só inicializa quando o cabeçalho estiver vazio', () => {
   assert.equal(dashboardNeedsHeaders(undefined), true);
@@ -22,9 +30,42 @@ test('hasConditionalRule reconhece regras existentes da coluna de resumo', () =>
     }
   };
 
-  assert.equal(hasConditionalRule(regra, 'Aumento'), true);
-  assert.equal(hasConditionalRule(regra, 'Sem alteração'), false);
-  assert.equal(hasConditionalRule({ ...regra, ranges: [{ startColumnIndex: 2, endColumnIndex: 3 }] }, 'Aumento'), false);
+  assert.equal(hasConditionalRule(regra, 'Aumento', 3), true);
+  assert.equal(hasConditionalRule(regra, 'Sem alteração', 3), false);
+  assert.equal(hasConditionalRule(regra, 'Aumento', 5), false);
+});
+
+const PAINEL = SHEET_LAYOUT.painel.headers;
+const ANTIGO = ['Data', 'Empresa Vinculada', 'Sindicato Laboral', 'Resumo/Impacto', 'Link PDF'];
+
+test('cabecalhoDoPainel troca o layout só enquanto o painel não tem dados', () => {
+  assert.deepEqual(cabecalhoDoPainel([], false, PAINEL), [...PAINEL]);
+  assert.deepEqual(cabecalhoDoPainel(ANTIGO, false, PAINEL), [...PAINEL]);
+  assert.equal(cabecalhoDoPainel([...PAINEL, ''], false, PAINEL), null);
+  assert.deepEqual(
+    cabecalhoDoPainel(ANTIGO, true, PAINEL),
+    [...ANTIGO, 'Código Sindicato', 'Nome do Sindicato', 'CNPJ Sindicato', 'Link Drive']
+  );
+  assert.equal(cabecalhoDoPainel([...PAINEL], true, PAINEL), null);
+});
+
+test('linha do painel cai na coluna certa no layout novo e no antigo com colunas acrescentadas', () => {
+  const linha = ['2026-09-29', '62', 'SINCOMEC', '11222333000181', 'ACME (123)', 'Sem alteração', 'https://drive/x'];
+  assert.deepEqual(alinharAoCabecalho([linha], PAINEL, [...PAINEL])[0], linha);
+  const legado = cabecalhoDoPainel(ANTIGO, true, PAINEL) ?? [];
+  const [alinhada] = alinharAoCabecalho([linha], PAINEL, legado);
+  assert.equal(alinhada[legado.indexOf('Resumo/Impacto')], 'Sem alteração');
+  assert.equal(alinhada[legado.indexOf('CNPJ Sindicato')], '11222333000181');
+  assert.equal(alinhada[legado.indexOf('Sindicato Laboral')], '');
+});
+
+test('isSummaryRule reconhece apenas as regras de cor criadas pelo robô', () => {
+  const formula = (valor: string) => ({ booleanRule: { condition: { type: 'CUSTOM_FORMULA', values: [{ userEnteredValue: valor }] } } });
+  assert.equal(isSummaryRule(formula('=OR(REGEXMATCH($D2,"Aumento"),REGEXMATCH($D2,"Alerta"))')), true);
+  assert.equal(isSummaryRule(formula('=REGEXMATCH($F2,"Alerta")')), true);
+  assert.equal(isSummaryRule({ booleanRule: { condition: { type: 'TEXT_CONTAINS', values: [{ userEnteredValue: 'Sem alteração' }] } } }), true);
+  assert.equal(isSummaryRule(formula('=$B2>10')), false);
+  assert.equal(isSummaryRule({ booleanRule: { condition: { type: 'TEXT_CONTAINS', values: [{ userEnteredValue: 'Urgente' }] } } }), false);
 });
 
 test('listarDocumentosPendentes inclui arquivos da pasta principal e da subpasta sindical', async () => {
