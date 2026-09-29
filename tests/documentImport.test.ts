@@ -163,8 +163,22 @@ test('lerCadastroSindicalExcel ignora aba anunciada sem conteúdo', () => {
     Sheets: {}
   }));
   try {
-    assert.throws(() => lerCadastroSindicalExcel(arquivo, { empresas: new Set(), sindicatos: new Set() }, 'sindicatos.xls'), /nenhuma aba possui as colunas/);
+    assert.throws(
+      () => lerCadastroSindicalExcel(arquivo, { empresas: new Set(), sindicatos: new Set() }, 'sindicatos.xls'),
+      /nenhuma aba possui as colunas.*Nenhuma aba legível \(formato desconhecido; assinatura [0-9a-f]+; abas listadas \[Auxiliar\]; abas lidas \[\]/
+    );
   } finally {
     somenteAbaAusente.mock.restore();
+  }
+
+  const chaveDiferente = mock.method(require('@e965/xlsx'), 'read', () => ({
+    SheetNames: ['Relatório'],
+    Sheets: { 'Relat?rio': lido.Sheets[lido.SheetNames[0]] }
+  }));
+  try {
+    const linhas = lerCadastroSindicalExcel(arquivo, { empresas: new Set(), sindicatos: new Set() }, 'sindicatos.xls');
+    assert.equal(linhas.sindicatos.length, 1);
+  } finally {
+    chaveDiferente.mock.restore();
   }
 });

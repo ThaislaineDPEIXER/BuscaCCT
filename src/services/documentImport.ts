@@ -156,6 +156,23 @@ function validarLinhasSindicais(
   return resultado;
 }
 
+// Diagnóstico técnico para quando a biblioteca não devolve o conteúdo das abas.
+function diagnosticarArquivo(arquivo: Buffer, workbook: XLS.WorkBook): string {
+  let erroEstrito = 'nenhum';
+  try {
+    XLS.read(arquivo, { type: 'buffer', WTF: true });
+  } catch (error) {
+    erroEstrito = (error instanceof Error ? error.message : String(error)).slice(0, 200);
+  }
+  return [
+    `formato ${workbook.bookType ?? 'desconhecido'}`,
+    `assinatura ${arquivo.subarray(0, 8).toString('hex')}`,
+    `abas listadas [${workbook.SheetNames.join(', ')}]`,
+    `abas lidas [${Object.keys(workbook.Sheets ?? {}).join(', ')}]`,
+    `erro de leitura: ${erroEstrito}`
+  ].join('; ');
+}
+
 export function lerCadastroSindicalExcel(
   arquivo: Buffer,
   existentes: { empresas: Set<string>; sindicatos: Set<string> },
@@ -163,8 +180,11 @@ export function lerCadastroSindicalExcel(
 ): LinhasImportacao {
   const workbook = XLS.read(arquivo, { type: 'buffer', cellDates: false });
   const encontrados: string[] = [];
-  for (const nome of workbook.SheetNames) {
-    const aba = workbook.Sheets[nome];
+  const lidas = workbook.Sheets ?? {};
+  // Algumas exportações de ERP gravam o nome da aba diferente da chave em Sheets; usa ambas.
+  const nomes = [...new Set([...workbook.SheetNames.filter(nome => lidas[nome]), ...Object.keys(lidas)])];
+  for (const nome of nomes) {
+    const aba = lidas[nome];
     if (!aba) continue;
     if (aba['!ref'] && XLS.utils.decode_range(aba['!ref']).e.r >= 50_000) {
       throw new Error(`${origem}: aba "${nome}" excede 50.000 linhas; divida o arquivo antes de importar.`);
@@ -186,7 +206,8 @@ export function lerCadastroSindicalExcel(
     if (linhas.length === 0) throw new Error(`${origem}: a planilha não contém cadastros abaixo do cabeçalho.`);
     return validarLinhasSindicais(linhas, linhas.map((_, i) => indice + 2 + i), existentes, origem);
   }
-  throw new Error(`${origem}: nenhuma aba possui as colunas CNPJ, Nome do Sindicato e UF nem blocos "Código:" de relatório. Cabeçalhos encontrados: ${encontrados.join('; ') || 'nenhuma aba legível'}.`);
+  const detalhe = encontrados.length > 0 ? `Cabeçalhos encontrados: ${encontrados.join('; ')}` : `Nenhuma aba legível (${diagnosticarArquivo(arquivo, workbook)})`;
+  throw new Error(`${origem}: nenhuma aba possui as colunas CNPJ, Nome do Sindicato e UF nem blocos "Código:" de relatório. ${detalhe}.`);
 }
 
 export const SYSTEM_PROMPT_CADASTROS = `Você extrai dados cadastrais de documentos brasileiros (cartão CNPJ, contrato social, listas de clientes, cadastros sindicais, CCTs).
