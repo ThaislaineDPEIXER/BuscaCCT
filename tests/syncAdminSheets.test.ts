@@ -3,8 +3,8 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 
 import { prisma } from '../src/db';
-import { sincronizarCadastros } from '../src/jobs/syncAdminSheets';
-import { EMPRESA_HEADERS, SINDICATO_HEADERS, alinharAoCabecalho, completarCabecalho, sanitizarEmpresas, sanitizarSindicatos } from '../src/services/adminSheetParser';
+import { sincronizarCadastros, sugerirVinculosPorCodigo } from '../src/jobs/syncAdminSheets';
+import { EMPRESA_HEADERS, SINDICATO_HEADERS, alinharAoCabecalho, completarCabecalho, sanitizarEmpresas, sanitizarSindicatos, type EmpresaPlanilha } from '../src/services/adminSheetParser';
 
 test('completarCabecalho preserva colunas antigas e só acrescenta as que faltam', () => {
   const antigo = ['CNPJ', 'Razão Social', 'Nome Fantasia', 'CNAE Principal', 'CNAEs Secundários', 'UF', 'Município', '', ''];
@@ -26,6 +26,31 @@ function cnpjDeTeste(prefixo: string): string {
 function linhaEmpresa(valores: Partial<Record<typeof EMPRESA_HEADERS[number], string>>): string[] {
   return EMPRESA_HEADERS.map(header => valores[header] ?? '');
 }
+
+test('sugerirVinculosPorCodigo preenche só correspondências únicas, ativas e ainda vazias', () => {
+  const empresas: EmpresaPlanilha[] = [
+    { linha: 2, cnpj: '10000000000001', razaoSocial: 'Empresa A', cnaePrincipal: '6202300', uf: 'SC', cidade: 'Florianópolis', sindicatoFolha: '1586/5' },
+    { linha: 3, cnpj: '10000000000002', razaoSocial: 'Empresa B', cnaePrincipal: '6202300', uf: 'SC', cidade: 'Joinville', sindicatoFolha: '52836/80' },
+    { linha: 4, cnpj: '10000000000003', razaoSocial: 'Empresa C', cnaePrincipal: '6202300', uf: 'SC', cidade: 'Blumenau', sindicatoFolha: '9999/1' },
+    { linha: 5, cnpj: '10000000000004', razaoSocial: 'Empresa D', cnaePrincipal: '6202300', uf: 'SC', cidade: 'Florianópolis', sindicatoFolha: '1586/5', cnpjSindicatoLaboral: '20000000000001' }
+  ];
+  const dados = {
+    rejeitadas: [],
+    empresas,
+    sindicatos: [
+      { linha: 2, cnpj: '20000000000001', razaoSocial: 'SINDPD', uf: 'SC', codigoSindical: '1586', ativo: true, baseTerritorial: [] },
+      { linha: 3, cnpj: '20000000000002', razaoSocial: 'SINDASPI', uf: 'SC', codigoSindical: '52836', ativo: true, baseTerritorial: [] },
+      { linha: 4, cnpj: '20000000000003', razaoSocial: 'Inativo', uf: 'SC', codigoSindical: '9999', ativo: false, baseTerritorial: [] },
+      { linha: 5, cnpj: '20000000000004', razaoSocial: 'Duplicado A', uf: 'SC', codigoSindical: '777', ativo: true, baseTerritorial: [] },
+      { linha: 6, cnpj: '20000000000005', razaoSocial: 'Duplicado B', uf: 'SC', codigoSindical: '777', ativo: true, baseTerritorial: [] }
+    ]
+  };
+
+  assert.deepEqual(sugerirVinculosPorCodigo(dados), [
+    { linha: 2, cnpjEmpresa: '10000000000001', cnpjSindicato: '20000000000001', codigoFolha: '1586' },
+    { linha: 3, cnpjEmpresa: '10000000000002', cnpjSindicato: '20000000000002', codigoFolha: '52836' }
+  ]);
+});
 
 test('sanitizarEmpresas limpa máscaras, ignora linhas vazias e reporta inválidas', () => {
   const { registros, rejeitadas } = sanitizarEmpresas([
@@ -80,7 +105,7 @@ test('sincronizarCadastros grava cadastros e confirma apenas vínculos com sindi
     sindicatos: [{ linha: 2, cnpj: cnpjSindicato, razaoSocial: 'Sindicato Planilha', uf: 'SC', baseTerritorial: ['Penha'], ativo: true }],
     empresas: [{
       linha: 2, codigoErp: '2002', cctRegistro: 'SC000123/2026', cnpj: cnpjEmpresa, razaoSocial: 'Empresa Planilha', cnaePrincipal: '4711302',
-      uf: 'SC', cidade: 'Penha', cnpjSindicatoLaboral: cnpjSindicato, cnpjSindicatoPatronal: cnpjInexistente
+      uf: 'SC', cidade: 'Penha', cnpjSindicatoLaboral: cnpjSindicato, cnpjSindicatoPatronal: cnpjInexistente, vinculoLaboralAutomatico: true
     }]
   });
 
@@ -98,7 +123,7 @@ test('sincronizarCadastros grava cadastros e confirma apenas vínculos com sindi
   });
   assert.equal(vinculo?.status, 'VALIDADO_DP');
   assert.equal(vinculo?.tipo, 'LABORAL');
-  assert.match(vinculo?.validadoPor ?? '', /Planilha/);
+  assert.match(vinculo?.validadoPor ?? '', /Automático: código de folha único/);
 });
 
 test('sincronizarCadastros não reverte um vínculo rejeitado pelo DP', async () => {

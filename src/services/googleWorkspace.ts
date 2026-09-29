@@ -241,6 +241,35 @@ export async function readAdminSheetData(sheetId: string): Promise<AdminSheetDat
   }
 }
 
+export async function preencherCnpjsLaboraisAutomaticos(
+  sheetId: string,
+  preenchimentos: Array<{ linha: number; cnpjSindicato: string }>
+): Promise<number[]> {
+  if (preenchimentos.length === 0) return [];
+  const sheets = sheetsClient();
+  const { cadastro } = await ensureAdminSheetStructure(sheetId);
+  const coluna = cadastro.headers.findIndex(header => normalizarHeader(header) === normalizarHeader('CNPJ Sindicato Laboral'));
+  if (coluna < 0) throw new Error(`Aba ${cadastro.title} sem a coluna CNPJ Sindicato Laboral.`);
+  const ranges = preenchimentos.map(item => `'${cadastro.title}'!${columnLetter(coluna + 1)}${item.linha}`);
+  const atual = await sheets.spreadsheets.values.batchGet({ spreadsheetId: sheetId, ranges });
+  const gravar = preenchimentos.flatMap((item, index) => {
+    const valorAtual = String(atual.data.valueRanges?.[index]?.values?.[0]?.[0] ?? '').trim();
+    if (valorAtual) return [];
+    return [{ range: ranges[index], values: [[item.cnpjSindicato]] }];
+  });
+  if (gravar.length > 0) {
+    await sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: sheetId,
+      requestBody: { valueInputOption: 'RAW', data: gravar }
+    });
+  }
+  return gravar.map(item => Number(item.range.match(/(\d+)$/)?.[1]));
+}
+
+function normalizarHeader(valor: string): string {
+  return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+}
+
 export function hasConditionalRule(rule: sheets_v4.Schema$ConditionalFormatRule, expectedText: string, columnIndex: number): boolean {
   const appliesToSummary = rule.ranges?.some(range => range.startColumnIndex === columnIndex && range.endColumnIndex === columnIndex + 1);
   const condition = rule.booleanRule?.condition;

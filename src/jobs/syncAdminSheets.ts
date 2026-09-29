@@ -2,7 +2,7 @@ import { env } from '../config/env';
 import { prisma } from '../db';
 import type { EmpresaPlanilha, LinhaRejeitada } from '../services/adminSheetParser';
 import { STATUS_ENQUADRAMENTO } from '../services/enquadramentoStatus';
-import { readAdminSheetData, type AdminSheetData } from '../services/googleWorkspace';
+import { preencherCnpjsLaboraisAutomaticos, readAdminSheetData, type AdminSheetData } from '../services/googleWorkspace';
 
 export type ResumoSincronizacao = {
   sindicatos: number;
@@ -11,6 +11,33 @@ export type ResumoSincronizacao = {
   vinculosPreservados: number;
   rejeitadas: LinhaRejeitada[];
 };
+
+export type SugestaoVinculoCodigo = { linha: number; cnpjEmpresa: string; cnpjSindicato: string; codigoFolha: string };
+
+function normalizarCodigo(valor: string | undefined): string | undefined {
+  const codigo = valor?.trim().match(/^(\d+)(?:\s*\/.*)?$/)?.[1];
+  return codigo?.replace(/^0+(?=\d)/, '');
+}
+
+export function sugerirVinculosPorCodigo(dados: AdminSheetData): SugestaoVinculoCodigo[] {
+  const sindicatosPorCodigo = new Map<string, Set<string>>();
+  for (const sindicato of dados.sindicatos) {
+    const codigo = normalizarCodigo(sindicato.codigoSindical);
+    if (!codigo || !sindicato.ativo) continue;
+    const cnpjs = sindicatosPorCodigo.get(codigo) ?? new Set<string>();
+    cnpjs.add(sindicato.cnpj);
+    sindicatosPorCodigo.set(codigo, cnpjs);
+  }
+
+  return dados.empresas.flatMap(empresa => {
+    if (empresa.cnpjSindicatoLaboral) return [];
+    const codigo = normalizarCodigo(empresa.sindicatoFolha);
+    if (!codigo) return [];
+    const cnpjs = sindicatosPorCodigo.get(codigo);
+    if (!cnpjs || cnpjs.size !== 1) return [];
+    return [{ linha: empresa.linha, cnpjEmpresa: empresa.cnpj, cnpjSindicato: [...cnpjs][0], codigoFolha: codigo }];
+  });
+}
 
 const ABA_EMPRESAS = 'Cadastro de Empresas';
 const ABA_SINDICATOS = 'Cadastro de Sindicatos';
@@ -51,7 +78,12 @@ async function vincular(
   const jaConfirmado = atual?.status === STATUS_ENQUADRAMENTO.CONFIRMADO;
   const auditoria = jaConfirmado
     ? {}
-    : { validadoPor: `Planilha: ${ABA_EMPRESAS} (linha ${empresa.linha})`, validadoEm: new Date() };
+    : {
+      validadoPor: tipo === 'LABORAL' && empresa.vinculoLaboralAutomatico
+        ? `Automático: código de folha único (linha ${empresa.linha})`
+        : `Planilha: ${ABA_EMPRESAS} (linha ${empresa.linha})`,
+      validadoEm: new Date()
+    };
 
   await prisma.enquadramentoSindical.upsert({
     where: chave,
@@ -135,7 +167,46 @@ export async function syncAdminSheets(): Promise<ResumoSincronizacao | null> {
     return null;
   }
 
-  const resumo = await sincronizarCadastros(await readAdminSheetData(env.googleSheetId));
+  const dados = await readAdminSheetData(env.googleSheetId);
+  const sugestoes = sugerirVinculosPorCodigo(dados);
+  const autorizadas: SugestaoVinculoCodigo[] = [];
+  for (const sugestao of sugestoes) {
+    const existentes = await prisma.enquadramentoSindical.findMany({
+      where: {
+        cliente: { cnpj: sugestao.cnpjEmpresa },
+        status: { in: [STATUS_ENQUADRAMENTO.CONFIRMADO, STATUS_ENQUADRAMENTO.REJEITADO] }
+      },
+      select: { status: true, sindicato: { select: { cnpj: true } } }
+    });
+    const rejeitado = existentes.some(vinculo =>
+      vinculo.sindicato.cnpj === sugestao.cnpjSindicato && vinculo.status === STATUS_ENQUADRAMENTO.REJEITADO
+    );
+    const conflitoConfirmado = existentes.some(vinculo =>
+      vinculo.sindicato.cnpj !== sugestao.cnpjSindicato && vinculo.status === STATUS_ENQUADRAMENTO.CONFIRMADO
+    );
+    if (rejeitado || conflitoConfirmado) {
+      console.warn(`[SYNC] Linha ${sugestao.linha}: código de folha ${sugestao.codigoFolha} não preenchido automaticamente por vínculo anterior ${rejeitado ? 'rejeitado' : 'confirmado com outro sindicato'}.`);
+      continue;
+    }
+    autorizadas.push(sugestao);
+  }
+
+  const linhasPreenchidas = await preencherCnpjsLaboraisAutomaticos(
+    env.googleSheetId,
+    autorizadas.map(({ linha, cnpjSindicato }) => ({ linha, cnpjSindicato }))
+  );
+  const preenchidas = new Map(autorizadas.filter(item => linhasPreenchidas.includes(item.linha)).map(item => [item.linha, item.cnpjSindicato]));
+  const dadosAtualizados: AdminSheetData = {
+    ...dados,
+    empresas: dados.empresas.map(empresa => {
+      const cnpjSindicatoLaboral = preenchidas.get(empresa.linha);
+      return cnpjSindicatoLaboral ? { ...empresa, cnpjSindicatoLaboral, vinculoLaboralAutomatico: true } : empresa;
+    })
+  };
+  if (preenchidas.size > 0) {
+    console.info(`[SYNC] CNPJs laborais preenchidos automaticamente por código ERP único: ${preenchidas.size}.`);
+  }
+  const resumo = await sincronizarCadastros(dadosAtualizados);
   console.info(
     `[SYNC] Cadastros sincronizados: ${resumo.sindicatos} sindicatos, ${resumo.empresas} empresas, ` +
     `${resumo.vinculosConfirmados} vínculos confirmados, ${resumo.vinculosPreservados} rejeições preservadas.`

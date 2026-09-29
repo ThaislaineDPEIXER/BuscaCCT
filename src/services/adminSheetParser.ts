@@ -21,6 +21,7 @@ export type EmpresaPlanilha = {
   cctRegistro?: string;
   cnpjSindicatoLaboral?: string;
   cnpjSindicatoPatronal?: string;
+  vinculoLaboralAutomatico?: boolean;
 };
 
 export type SindicatoPlanilha = {
