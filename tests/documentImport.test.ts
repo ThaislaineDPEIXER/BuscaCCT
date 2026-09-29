@@ -77,6 +77,27 @@ test('lerCadastroSindicalExcel preserva linhas de cadastro e deduplica sem criar
   assert.throws(() => lerCadastroSindicalExcel(Buffer.from('invalido'), { empresas: new Set(), sindicatos: new Set() }, 'outro.xls'), /nenhuma aba possui/);
 });
 
+test('lerCadastroSindicalExcel aceita cabeçalhos com pontuação e mostra os encontrados quando não reconhece', () => {
+  const vazio = { empresas: new Set<string>(), sindicatos: new Set<string>() };
+  const planilha = (linhas: string[][]) => {
+    const workbook = XLS.utils.book_new();
+    XLS.utils.book_append_sheet(workbook, XLS.utils.aoa_to_sheet(linhas), 'Relatório');
+    return XLS.write(workbook, { bookType: 'biff8', type: 'buffer' });
+  };
+
+  const aceita = lerCadastroSindicalExcel(planilha([
+    ['Sindicato', 'C.N.P.J.', 'U.F.'],
+    ['Sindicato do Comércio', '11.222.333/0001-81', 'SC']
+  ]), vazio, 'pontuado.xls');
+  assert.equal(aceita.sindicatos.length, 1);
+  assert.equal(aceita.sindicatos[0][1], 'Sindicato do Comércio');
+
+  assert.throws(
+    () => lerCadastroSindicalExcel(planilha([['Relação de sindicatos'], ['Código', 'Descrição', 'Inscrição'], ['62', 'SINCOMEC', '11222333000181']]), vazio, 'outro.xls'),
+    /Cabeçalhos encontrados: aba "Relatório" linha 2: Código \| Descrição \| Inscrição/
+  );
+});
+
 test('lerCadastroSindicalExcel ignora aba anunciada sem conteúdo', () => {
   const workbook = XLS.utils.book_new();
   XLS.utils.book_append_sheet(workbook, XLS.utils.aoa_to_sheet([

@@ -41,12 +41,24 @@ export type LinhasImportacao = {
 };
 
 function normalizarCabecalho(valor: string): string {
-  return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+const CAMPOS_OBRIGATORIOS = ['CNPJ', 'Nome do Sindicato', 'UF'];
+
+// Linha com mais células preenchidas no topo da aba: provável cabeçalho, mostrado no erro para ajustar o mapeamento.
+function resumirCabecalho(nome: string, valores: (string | number)[][]): string {
+  const candidata = valores.slice(0, 30)
+    .map((linha, indice) => ({ indice, celulas: linha.map(celula => String(celula).trim()).filter(Boolean) }))
+    .sort((a, b) => b.celulas.length - a.celulas.length)[0];
+  if (!candidata || candidata.celulas.length === 0) return `aba "${nome}" vazia`;
+  const celulas = candidata.celulas.slice(0, 15).map(celula => celula.slice(0, 40));
+  return `aba "${nome}" linha ${candidata.indice + 1}: ${celulas.join(' | ')}`;
 }
 
 const COLUNAS_SINDICATO: Record<string, string[]> = {
   CNPJ: ['cnpj', 'cnpj sindicato', 'cnpj do sindicato', 'cnpj da entidade'],
-  'Nome do Sindicato': ['nome do sindicato', 'nome sindicato', 'razao social', 'nome', 'nome da entidade', 'entidade sindical'],
+  'Nome do Sindicato': ['nome do sindicato', 'nome sindicato', 'sindicato', 'razao social', 'nome', 'nome da entidade', 'entidade sindical'],
   UF: ['uf', 'estado', 'sigla uf'],
   'Município': ['municipio', 'cidade'],
   Categoria: ['categoria', 'segmento'],
@@ -61,6 +73,7 @@ export function lerCadastroSindicalExcel(
   origem: string
 ): LinhasImportacao {
   const workbook = XLS.read(arquivo, { type: 'buffer', cellDates: false });
+  const encontrados: string[] = [];
   for (const nome of workbook.SheetNames) {
     const aba = workbook.Sheets[nome];
     if (!aba) continue;
@@ -70,9 +83,12 @@ export function lerCadastroSindicalExcel(
     const valores = XLS.utils.sheet_to_json<(string | number)[]>(aba, { header: 1, raw: false, defval: '' });
     const indice = valores.findIndex(linha => {
       const nomes = new Set(linha.map(celula => normalizarCabecalho(String(celula))));
-      return ['CNPJ', 'Nome do Sindicato', 'UF'].every(campo => COLUNAS_SINDICATO[campo].some(alias => nomes.has(alias)));
+      return CAMPOS_OBRIGATORIOS.every(campo => COLUNAS_SINDICATO[campo].some(alias => nomes.has(alias)));
     });
-    if (indice < 0) continue;
+    if (indice < 0) {
+      encontrados.push(resumirCabecalho(nome, valores));
+      continue;
+    }
     const cabecalho = valores[indice].map(celula => normalizarCabecalho(String(celula)));
     const colunas = SINDICATO_HEADERS.map(header => cabecalho.findIndex(celula => COLUNAS_SINDICATO[header]?.includes(celula)));
     const linhas = valores.slice(indice + 1).map(linha => colunas.map(coluna => coluna < 0 ? '' : String(linha[coluna] ?? '')));
@@ -94,7 +110,7 @@ export function lerCadastroSindicalExcel(
     }
     return resultado;
   }
-  throw new Error(`${origem}: nenhuma aba possui as colunas CNPJ, Nome do Sindicato e UF.`);
+  throw new Error(`${origem}: nenhuma aba possui as colunas CNPJ, Nome do Sindicato e UF. Cabeçalhos encontrados: ${encontrados.join('; ') || 'nenhuma aba legível'}.`);
 }
 
 export const SYSTEM_PROMPT_CADASTROS = `Você extrai dados cadastrais de documentos brasileiros (cartão CNPJ, contrato social, listas de clientes, cadastros sindicais, CCTs).
