@@ -44,18 +44,19 @@ test('cabecalhoDoPainel troca o layout só enquanto o painel não tem dados', ()
   assert.equal(cabecalhoDoPainel([...PAINEL, ''], false, PAINEL), null);
   assert.deepEqual(
     cabecalhoDoPainel(ANTIGO, true, PAINEL),
-    [...ANTIGO, 'Código Sindicato', 'Nome do Sindicato', 'CNPJ Sindicato', 'CCT (Registro MTE)', 'Link Drive']
+    [...ANTIGO, 'Código Sindicato', 'Código Convenção (ERP)', 'Nome do Sindicato', 'CNPJ Sindicato', 'CCT (Registro MTE)', 'Link Drive']
   );
   assert.equal(cabecalhoDoPainel([...PAINEL], true, PAINEL), null);
 });
 
 test('linha do painel cai na coluna certa no layout novo e no antigo com colunas acrescentadas', () => {
-  const linha = ['2026-09-29', '62', 'SINCOMEC', '11222333000181', 'ACME (Cód: 1)', 'SC000123/2026', 'Sem alteração', 'https://drive/x'];
+  const linha = ['2026-09-29', '62', '-', 'SINCOMEC', '11222333000181', 'ACME (Cód: 1)', 'SC000123/2026', 'Sem alteração', 'https://drive/x'];
   assert.deepEqual(alinharAoCabecalho([linha], PAINEL, [...PAINEL])[0], linha);
   const legado = cabecalhoDoPainel(ANTIGO, true, PAINEL) ?? [];
   const [alinhada] = alinharAoCabecalho([linha], PAINEL, legado);
   assert.equal(alinhada[legado.indexOf('Resumo/Impacto')], 'Sem alteração');
   assert.equal(alinhada[legado.indexOf('CNPJ Sindicato')], '11222333000181');
+  assert.equal(alinhada[legado.indexOf('Código Convenção (ERP)')], '-');
   assert.equal(alinhada[legado.indexOf('Sindicato Laboral')], '');
 });
 

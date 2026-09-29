@@ -85,6 +85,7 @@ export function montarLinhaPainel(
   return [
     data.toISOString(),
     sindicato.codigoSindical?.trim() || '-',
+    '-',
     sindicato.razaoSocial,
     formatarCnpj(sindicato.cnpj),
     empresas.map(empresa => `${empresa.razaoSocial} (Cód: ${empresa.codigoErp?.trim() || '-'})`).join('; '),

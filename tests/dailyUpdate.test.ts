@@ -14,12 +14,13 @@ test('montarLinhaPainel separa código, nome e CNPJ do sindicato na ordem do cab
   const linha = montarLinhaPainel(data, { cnpj: '85787562000180', razaoSocial: 'SINCOMEC', codigoSindical: ' 62 ' }, empresas, 'Sem alteração', 'https://drive/x');
   assert.equal(linha.length, SHEET_LAYOUT.painel.headers.length);
   assert.deepEqual(linha, [
-    '2026-09-29T06:00:00.000Z', '62', 'SINCOMEC', '85.787.562/0001-80',
+    '2026-09-29T06:00:00.000Z', '62', '-', 'SINCOMEC', '85.787.562/0001-80',
     'ACME LTDA (Cód: 1586/5); BETA SA (Cód: -)', 'SC000123/2026', 'Sem alteração', 'https://drive/x'
   ]);
   const semDados = montarLinhaPainel(data, { cnpj: '1', razaoSocial: 'X', codigoSindical: null }, [], '', '');
-  assert.equal(semDados[1], '-');
-  assert.equal(semDados[5], '-');
+  assert.equal(semDados[SHEET_LAYOUT.painel.headers.indexOf('Código Sindicato')], '-');
+  assert.equal(semDados[SHEET_LAYOUT.painel.headers.indexOf('Código Convenção (ERP)')], '-');
+  assert.equal(semDados[SHEET_LAYOUT.painel.headers.indexOf('CCT (Registro MTE)')], '-');
 });
 
 test('descreverImpacto gera o texto que aciona as cores do painel', () => {

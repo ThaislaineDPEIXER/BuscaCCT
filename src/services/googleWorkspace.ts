@@ -21,7 +21,7 @@ const WORKSPACE_SCOPES = [
 export const SHEET_LAYOUT = {
   painel: {
     title: 'Painel de CCTs',
-    headers: ['Data', 'Código Sindicato', 'Nome do Sindicato', 'CNPJ Sindicato', 'Empresa Vinculada', 'CCT (Registro MTE)', 'Resumo/Impacto', 'Link Drive']
+    headers: ['Data', 'Código Sindicato', 'Código Convenção (ERP)', 'Nome do Sindicato', 'CNPJ Sindicato', 'Empresa Vinculada', 'CCT (Registro MTE)', 'Resumo/Impacto', 'Link Drive']
   },
   matriz: {
     title: 'Matriz de Enquadramento',
