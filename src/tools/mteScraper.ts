@@ -287,7 +287,16 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
   if (await captcha.isVisible().catch(() => false)) {
     throw new CctCaptchaRequiredError('Mediador exige CAPTCHA; consulta automatica interrompida');
   }
-  const campoCnpj = await localizarPrimeiro(page, [env.mteCnpjSelector, 'input[name="nrCnpjSindicatoLaboral"]'], 'CNPJ');
+  const campoCnpj = await localizarPrimeiro(page, [
+    env.mteCnpjSelector,
+    'input[name="nrCnpjSindicatoLaboral"]',
+    'input[name$="txbCnpjCei" i]',
+    'input[id$="txbCnpjCei" i]',
+    'tr:has-text("CNPJ/CAEPF") input[type="text"]',
+    'input[name*="cnpj" i]',
+    'input[id*="cnpj" i]',
+    'input[placeholder*="00.000.000"]'
+  ], 'CNPJ');
   const checkboxCnpj = page.locator('input[type="checkbox"]').first();
   if (await checkboxCnpj.count() > 0 && await checkboxCnpj.isVisible().catch(() => false)) {
     await checkboxCnpj.check();
