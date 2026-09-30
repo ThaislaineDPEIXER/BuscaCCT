@@ -175,8 +175,16 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
   await page.goto(env.mteUrl, { waitUntil: 'domcontentloaded', timeout: env.mteNavigationTimeoutMs });
   const titulo = await page.title().catch(() => '');
   const corpo = await page.locator('body').innerText().catch(() => '');
+  const urlFinal = page.url();
+  console.log(`[MTE-DIAGNOSTICO] URL Final: ${urlFinal}`);
+  console.log(`[MTE-DIAGNOSTICO] Título da Página: "${titulo}"`);
+  console.log(`[MTE-DIAGNOSTICO] Trecho do Texto: "${corpo.substring(0, 200).replace(/\s+/g, ' ')}"`);
+
   if (detectarDesafioAntiBot(titulo, corpo)) {
-    throw new CctAccessBlockedError('Mediador bloqueou o acesso automatizado com um desafio anti-bot');
+    const texto = `${titulo ?? ''}\n${corpo ?? ''}`.normalize('NFKC');
+    const padraoEncontrado = MTE_ANTI_BOT_PATTERNS.find(padrao => padrao.test(texto));
+    console.warn(`[MTE-DIAGNOSTICO] Detector acionado pelo padrão: ${padraoEncontrado}`);
+    throw new CctAccessBlockedError(`Mediador bloqueou o acesso automatizado (Padrão: ${padraoEncontrado})`);
   }
   const captcha = page.locator(env.mteCaptchaSelector);
   if (await captcha.isVisible().catch(() => false)) {
