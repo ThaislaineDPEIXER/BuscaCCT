@@ -56,4 +56,5 @@ jobs:
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_DRIVE_INBOX_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_INBOX_FOLDER_ID }}
           RETRY_FAILED_UNION_IMPORTS: ${{ inputs.retry_failed_union_imports || 'false' }}
+          MTE_PROXY_URL: ${{ secrets.MTE_PROXY_URL }}
         run: npm run start:worker

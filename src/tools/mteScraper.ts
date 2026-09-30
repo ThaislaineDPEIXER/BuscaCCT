@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import { BrowserContext, chromium, Page } from 'playwright';
+import { BrowserContext, chromium, Page, LaunchOptions } from 'playwright';
 import { prisma } from '../db';
 import { env } from '../config/env';
 import { criarAlertaNovaCct } from '../services/alertService';
@@ -68,7 +68,29 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
 
   let ultimoErro: unknown;
   for (let tentativa = 1; tentativa <= env.mteMaxAttempts; tentativa += 1) {
-    const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    // Configuração base de lançamento do navegador
+    const launchOptions: LaunchOptions = {
+      headless: true,
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    };
+
+    // Injeção de Proxy Residencial (se configurado nas variáveis de ambiente / secrets)
+    const proxyUrl = process.env.MTE_PROXY_URL;
+    if (proxyUrl) {
+      try {
+        const parsed = new URL(proxyUrl);
+        launchOptions.proxy = {
+          server: `${parsed.protocol}//${parsed.hostname}:${parsed.port}`,
+          username: decodeURIComponent(parsed.username),
+          password: decodeURIComponent(parsed.password)
+        };
+        console.log('[MTE] Navegador configurado para utilizar proxy residencial BR.');
+      } catch (err) {
+        console.error('[MTE] Erro ao formatar URL do MTE_PROXY_URL:', err);
+      }
+    }
+
+    const browser = await chromium.launch(launchOptions);
     try {
       const context = await browser.newContext();
       const page = await context.newPage();
