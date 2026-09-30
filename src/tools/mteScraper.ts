@@ -13,6 +13,10 @@ export class CctCaptchaRequiredError extends CctUnavailableError {}
 export class CctAccessBlockedError extends CctUnavailableError {}
 export class CctManualDownloadRequiredError extends CctUnavailableError {}
 
+export function deveIgnorarPendenciaManual(status: string | undefined, reprocessarPendenciasManuais: boolean): boolean {
+  return status === 'PENDENTE_DOWNLOAD_MANUAL' && !reprocessarPendenciasManuais;
+}
+
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function normalizarCnpj(cnpj: string): string {
@@ -60,7 +64,7 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
   const cache = await prisma.convencaoColetiva.findUnique({
     where: { cnpjSindicato_anoVigencia: { cnpjSindicato: cnpjNormalizado, anoVigencia } }
   });
-  if (cache?.status === 'PENDENTE_DOWNLOAD_MANUAL') {
+  if (deveIgnorarPendenciaManual(cache?.status, process.env.RETRY_FAILED_UNION_IMPORTS === 'true')) {
     throw new CctManualDownloadRequiredError(`CCT ${cnpjNormalizado}/${anoVigencia} aguarda PDF manual.`);
   }
   const cacheAtual = cache && cache.status !== 'PENDENTE_DOWNLOAD_MANUAL' && Date.now() - cache.dataAtualizacao.getTime() < CACHE_TTL_MS;

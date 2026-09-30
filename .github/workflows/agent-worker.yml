@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       retry_failed_union_imports:
-        description: 'Reprocessar planilhas sindicais e PDFs manuais de CCT com erro'
+        description: 'Reprocessar planilhas, PDFs manuais com erro e pendências do MTE'
         type: boolean
         default: false
 

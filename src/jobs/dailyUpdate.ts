@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import cron from 'node-cron';
+import { Prisma } from '@prisma/client';
 import { env } from '../config/env';
 import { prisma } from '../db';
 import { extrairCctComIa } from '../services/claudeAgent';
@@ -29,6 +30,42 @@ export function calcularProximaTentativa(falhasConsecutivas: number, agora = new
   const expoente = Math.max(0, falhasConsecutivas - 1);
   const atraso = Math.min(env.mteRetryBaseDelayMs * (2 ** expoente), env.mteRetryMaxDelayMs);
   return new Date(agora.getTime() + atraso);
+}
+
+export function cctsQueBloqueiamFila(cacheCctDesde: Date, reprocessarPendenciasManuais: boolean): Prisma.ConvencaoColetivaWhereInput[] {
+  return [
+    ...(!reprocessarPendenciasManuais ? [{ status: 'PENDENTE_DOWNLOAD_MANUAL' }] : []),
+    { status: 'EXTRAIDA', dataAtualizacao: { gte: cacheCctDesde } },
+    { status: 'EXTRAIDA', fonteTipo: 'UPLOAD_MANUAL' }
+  ];
+}
+
+export function filtroElegibilidadeFilaMte(
+  agora: Date,
+  limite: Date,
+  anoAtual: number,
+  mesAtual: number,
+  reprocessarPendenciasManuais: boolean
+): Prisma.SindicatoWhereInput {
+  const elegibilidadeNormal: Prisma.SindicatoWhereInput = {
+    AND: [
+      { OR: [{ proximaTentativa: null }, { proximaTentativa: { lte: agora } }] },
+      { OR: [
+        { ultimaVarredura: null },
+        { ultimaVarredura: { lt: limite } },
+        { mesDataBase: mesAtual }
+      ] }
+    ]
+  };
+
+  return reprocessarPendenciasManuais
+    ? {
+      OR: [
+        elegibilidadeNormal,
+        { convencoes: { some: { anoVigencia: anoAtual, status: 'PENDENTE_DOWNLOAD_MANUAL' } } }
+      ]
+    }
+    : elegibilidadeNormal;
 }
 
 let varreduraEmAndamento = false;
@@ -247,6 +284,7 @@ async function selecionarFila() {
   const cacheCctDesde = new Date(agora.getTime() - 24 * 60 * 60 * 1_000);
   const mesAtual = agora.getMonth() + 1;
   const anoAtual = agora.getFullYear();
+  const reprocessarPendenciasManuais = process.env.RETRY_FAILED_UNION_IMPORTS === 'true';
 
   return prisma.sindicato.findMany({
     where: {
@@ -255,21 +293,10 @@ async function selecionarFila() {
       convencoes: {
         none: {
           anoVigencia: anoAtual,
-          OR: [
-            { status: 'PENDENTE_DOWNLOAD_MANUAL' },
-            { status: 'EXTRAIDA', dataAtualizacao: { gte: cacheCctDesde } },
-            { status: 'EXTRAIDA', fonteTipo: 'UPLOAD_MANUAL' }
-          ]
+          OR: cctsQueBloqueiamFila(cacheCctDesde, process.env.RETRY_FAILED_UNION_IMPORTS === 'true')
         }
       },
-      AND: [
-        { OR: [{ proximaTentativa: null }, { proximaTentativa: { lte: agora } }] },
-        { OR: [
-          { ultimaVarredura: null },
-          { ultimaVarredura: { lt: limite } },
-          { mesDataBase: mesAtual }
-        ] }
-      ]
+      AND: [filtroElegibilidadeFilaMte(agora, limite, anoAtual, mesAtual, reprocessarPendenciasManuais)]
     },
     orderBy: [{ ultimaVarredura: 'asc' }, { atualizadoEm: 'asc' }],
     take: env.mteBatchSize,
