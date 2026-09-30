@@ -40,6 +40,20 @@ async function localizarPrimeiro(page: Page, seletores: string[], campo: string)
 
 type ConsultaMediador = { texto: string; pdf?: Buffer; fonteUrl: string };
 
+export const MTE_ANTI_BOT_PATTERNS = [
+  /just a moment/i,
+  /verify you are human/i,
+  /cf-chl/i,
+  /cloudflare/i,
+  /captcha|recaptcha|challenge/i,
+  /acesso bloqueado|bloqueou.*acesso|desafio anti-bot/i
+];
+
+export function detectarDesafioAntiBot(titulo: string, corpo: string): boolean {
+  const texto = `${titulo ?? ''}\n${corpo ?? ''}`.normalize('NFKC');
+  return MTE_ANTI_BOT_PATTERNS.some(padrao => padrao.test(texto));
+}
+
 export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promise<string> {
   const cnpjNormalizado = normalizarCnpj(cnpj);
   const cache = await prisma.convencaoColetiva.findUnique({
@@ -101,7 +115,7 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
     } catch (error) {
       ultimoErro = error;
       await browser.close();
-      if (error instanceof CctCaptchaRequiredError) break;
+      if (error instanceof CctCaptchaRequiredError || error instanceof CctAccessBlockedError) break;
       if (tentativa < env.mteMaxAttempts) await wait(2_000 * tentativa);
     }
   }
@@ -117,7 +131,7 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
   await page.goto(env.mteUrl, { waitUntil: 'domcontentloaded', timeout: env.mteNavigationTimeoutMs });
   const titulo = await page.title().catch(() => '');
   const corpo = await page.locator('body').innerText().catch(() => '');
-  if (/just a moment|verify you are human|cf-chl|cloudflare/i.test(`${titulo}\n${corpo}`)) {
+  if (detectarDesafioAntiBot(titulo, corpo)) {
     throw new CctAccessBlockedError('Mediador bloqueou o acesso automatizado com um desafio anti-bot');
   }
   const captcha = page.locator(env.mteCaptchaSelector);
