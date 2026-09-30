@@ -1,10 +1,14 @@
 import crypto from 'node:crypto';
-import { BrowserContext, chromium, Page, LaunchOptions } from 'playwright';
+import { BrowserContext, Page, LaunchOptions } from 'playwright';
+import { chromium } from 'playwright-extra';
+import stealthPlugin from 'puppeteer-extra-plugin-stealth';
 import { prisma } from '../db';
 import { env } from '../config/env';
 import { criarAlertaNovaCct } from '../services/alertService';
 import { extrairTextoPdf } from '../services/cctOcr';
 import { storePdf } from '../services/documentStorage';
+
+chromium.use(stealthPlugin());
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 
@@ -75,7 +79,7 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
     // Configuração base de lançamento do navegador
     const launchOptions: LaunchOptions = {
       headless: true,
-      args: ['--no-sandbox', '--disable-setuid-sandbox']
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-blink-features=AutomationControlled']
     };
 
     // Injeção de Proxy Residencial (se configurado nas variáveis de ambiente / secrets)
