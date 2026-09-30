@@ -15,7 +15,7 @@ import { STATUS_ENQUADRAMENTO, rotuloStatusEnquadramento } from '../services/enq
 import { appendRowToSheet, baixarArquivoDrive, ensureCctDashboard, listarDocumentosPendentes, marcarDocumento, syncEnquadramentoMatrix, uploadPdfToDrive } from '../services/googleWorkspace';
 import { extrairTextoPdf } from '../services/cctOcr';
 import { identificarPdfCctManual, textoContemCnpj } from '../services/documentImport';
-import { buscarESalvarCCT, CctAccessBlockedError, CctCaptchaRequiredError } from '../tools/mteScraper';
+import { buscarESalvarCCTComAno, CctAccessBlockedError, CctCaptchaRequiredError } from '../tools/mteScraper';
 import { importarDocumentosDoDrive } from './importDocuments';
 import { syncAdminSheets } from './syncAdminSheets';
 
@@ -350,16 +350,16 @@ export async function executarFilaMte(): Promise<void> {
       try {
         console.info(`[MTE] Processando ${sindicato.cnpj} (${sindicato.razaoSocial})`);
         const anoVigencia = new Date().getFullYear();
-        const textoBruto = await buscarESalvarCCT(sindicato.cnpj, anoVigencia);
-        const parametros = await extrairCctComIa(textoBruto);
+        const resultadoCct = await buscarESalvarCCTComAno(sindicato.cnpj, anoVigencia);
+        const parametros = await extrairCctComIa(resultadoCct.texto);
 
-        await persistirExtracaoCct(sindicato.cnpj, anoVigencia, parametros);
-        await publicarCctNoWorkspace(sindicato, anoVigencia);
+        await persistirExtracaoCct(sindicato.cnpj, resultadoCct.anoVigencia, parametros);
+        await publicarCctNoWorkspace(sindicato, resultadoCct.anoVigencia);
         await prisma.sindicato.update({
           where: { id: sindicato.id },
           data: { ultimaVarredura: new Date(), proximaTentativa: null, falhasConsecutivas: 0 }
         });
-        console.info(`[MTE] CCT processada e extraída para ${sindicato.cnpj}`);
+        console.info(`[MTE] CCT ${resultadoCct.anoVigencia} processada e extraída para ${sindicato.cnpj}`);
       } catch (error) {
         console.error(`[MTE] Falha no CNPJ ${sindicato.cnpj}:`, error);
         await notificarFalhaMte(sindicato.cnpj, error);

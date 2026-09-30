@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env';
-import { buscarESalvarCCT } from '../tools/mteScraper';
+import { buscarESalvarCCTComAno } from '../tools/mteScraper';
 import { consultarIndice } from '../tools/ibgeApi';
 
 const anthropic = env.anthropicApiKey ? new Anthropic({ apiKey: env.anthropicApiKey }) : null;
@@ -231,17 +231,18 @@ export async function consultarBuscador(pergunta: string): Promise<string> {
         let resultado: unknown;
         if (chamada.name === 'consultar_sistema_mediador') {
           const ano = Number(input.ano_vigencia);
-          const laboral = await buscarESalvarCCT(String(input.cnpj_sindicato_laboral), ano);
+          const laboral = await buscarESalvarCCTComAno(String(input.cnpj_sindicato_laboral), ano);
           const patronal = input.cnpj_sindicato_patronal
-            ? await buscarESalvarCCT(String(input.cnpj_sindicato_patronal), ano)
+            ? await buscarESalvarCCTComAno(String(input.cnpj_sindicato_patronal), ano)
             : null;
           resultado = {
             fonte: 'Sistema Mediador - MTE',
-            anoVigencia: ano,
+            anoVigencia: laboral.anoVigencia,
             cnpjSindicatoLaboral: input.cnpj_sindicato_laboral,
             cnpjSindicatoPatronal: input.cnpj_sindicato_patronal ?? null,
-            textoLaboral: laboral,
-            textoPatronal: patronal
+            textoLaboral: laboral.texto,
+            anoVigenciaPatronal: patronal?.anoVigencia ?? null,
+            textoPatronal: patronal?.texto ?? null
           };
         } else if (chamada.name === 'consultar_indice_ibge') {
           resultado = await consultarIndice(String(input.indice) as 'IPCA' | 'INPC', String(input.periodoInicio), String(input.periodoFim));

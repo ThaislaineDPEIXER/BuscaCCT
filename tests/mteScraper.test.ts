@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { CctAccessBlockedError, CctCaptchaRequiredError, CctUnavailableError, detectarDesafioAntiBot, deveIgnorarPendenciaManual } from '../src/tools/mteScraper';
+import { anoMaisRecenteDisponivel, CctAccessBlockedError, CctCaptchaRequiredError, CctUnavailableError, detectarDesafioAntiBot, deveIgnorarPendenciaManual, formatarCnpj, temTextoCctUtilizavel } from '../src/tools/mteScraper';
 
 test('exceções do scraper devem manter a hierarquia correta', () => {
   const captcha = new CctCaptchaRequiredError('captchas');
@@ -25,4 +25,21 @@ test('pendência manual só bloqueia nova consulta sem retry explícito', () => 
   assert.equal(deveIgnorarPendenciaManual('PENDENTE_DOWNLOAD_MANUAL', false), true);
   assert.equal(deveIgnorarPendenciaManual('PENDENTE_DOWNLOAD_MANUAL', true), false);
   assert.equal(deveIgnorarPendenciaManual('EXTRAIDA', true), false);
+});
+
+test('cache vazio ou composto apenas por espaços não é um texto de CCT utilizável', () => {
+  assert.equal(temTextoCctUtilizavel(undefined), false);
+  assert.equal(temTextoCctUtilizavel(''), false);
+  assert.equal(temTextoCctUtilizavel('   \n'), false);
+  assert.equal(temTextoCctUtilizavel('Texto da convenção'), true);
+});
+
+test('fallback escolhe o ano mais recente sem ultrapassar o ano anterior', () => {
+  assert.equal(anoMaisRecenteDisponivel(['Vigência 2025/2026', 'Registro 2024'], 2025), 2025);
+  assert.equal(anoMaisRecenteDisponivel(['Vigência 2026/2027'], 2025), undefined);
+});
+
+test('CNPJ é formatado conforme a máscara do formulário do Mediador', () => {
+  assert.equal(formatarCnpj('79831442000130'), '79.831.442/0001-30');
+  assert.equal(formatarCnpj('79.831.442/0001-30'), '79.831.442/0001-30');
 });

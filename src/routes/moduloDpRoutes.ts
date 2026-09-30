@@ -3,7 +3,7 @@ import { prisma } from '../db';
 import { assinarAlertas, atualizarAlerta, listarAlertas } from '../services/alertService';
 import { consultarBuscador, extrairCctComIa, validarExtracaoCct } from '../services/claudeAgent';
 import { persistirExtracaoCct } from '../services/cctExtractionPersistence';
-import { buscarESalvarCCT } from '../tools/mteScraper';
+import { buscarESalvarCCTComAno } from '../tools/mteScraper';
 
 export const moduloDpRoutes = Router();
 
@@ -57,28 +57,29 @@ moduloDpRoutes.get('/parametros-cct/:cnpj', async (req, res) => {
       orderBy: { anoVigencia: 'desc' }
     });
 
-    const texto = cct?.textoCompleto ?? await buscarESalvarCCT(cnpj, anoAtual);
+    const resultadoCct = await buscarESalvarCCTComAno(cnpj, anoAtual);
+    const cctDoResultado = cct?.anoVigencia === resultadoCct.anoVigencia ? cct : null;
     let parametros: Awaited<ReturnType<typeof extrairCctComIa>>;
-    let precisaPersistir = !cct?.parametrosJson;
-    if (cct?.parametrosJson) {
+    let precisaPersistir = !cctDoResultado?.parametrosJson;
+    if (cctDoResultado?.parametrosJson) {
       try {
-        parametros = validarExtracaoCct(JSON.parse(cct.parametrosJson));
+        parametros = validarExtracaoCct(JSON.parse(cctDoResultado.parametrosJson));
       } catch {
-        parametros = await extrairCctComIa(texto);
+        parametros = await extrairCctComIa(resultadoCct.texto);
         precisaPersistir = true;
       }
     } else {
-      parametros = await extrairCctComIa(texto);
+      parametros = await extrairCctComIa(resultadoCct.texto);
     }
 
     if (precisaPersistir) {
-      await persistirExtracaoCct(cnpj, cct?.anoVigencia ?? anoAtual, parametros);
+      await persistirExtracaoCct(cnpj, resultadoCct.anoVigencia, parametros);
     }
 
     res.json({
       cnpjSindicato: cnpj,
-      anoVigencia: cct?.anoVigencia ?? anoAtual,
-      fonteUrl: cct?.fonteUrl ?? 'https://mediador.trabalho.gov.br/sistemas/mediador/ConsultarInstColetivo',
+      anoVigencia: resultadoCct.anoVigencia,
+      fonteUrl: resultadoCct.fonteUrl ?? 'https://mediador.trabalho.gov.br/sistemas/mediador/ConsultarInstColetivo',
       ...parametros,
       parametros,
       resumo: parametros.resumo_mudancas

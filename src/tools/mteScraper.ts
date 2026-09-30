@@ -21,6 +21,10 @@ export function deveIgnorarPendenciaManual(status: string | undefined, reprocess
   return status === 'PENDENTE_DOWNLOAD_MANUAL' && !reprocessarPendenciasManuais;
 }
 
+export function temTextoCctUtilizavel(texto: string | undefined): texto is string {
+  return Boolean(texto?.trim());
+}
+
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function normalizarCnpj(cnpj: string): string {
@@ -29,14 +33,27 @@ function normalizarCnpj(cnpj: string): string {
   return normalizado;
 }
 
+export function formatarCnpj(cnpj: string): string {
+  return normalizarCnpj(cnpj).replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+}
+
 async function selecionarOpcaoPorTexto(page: Page, seletor: string, textoEsperado: string, campo: string): Promise<void> {
   const select = page.locator(seletor);
   if (await select.count() === 0) throw new CctUnavailableError(`Seletor do campo ${campo} nao encontrado no Mediador: ${seletor}`);
 
   const opcoes = await select.locator('option').evaluateAll(options => options.map(option => ({ label: option.textContent?.trim() ?? '', value: (option as HTMLOptionElement).value })));
-  const opcao = opcoes.find(option => option.label.toLocaleLowerCase().includes(textoEsperado.toLocaleLowerCase()));
+  const normalizar = (texto: string) => texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().trim();
+  const esperado = normalizar(textoEsperado);
+  const opcao = opcoes.find(option => normalizar(option.label) === esperado)
+    ?? opcoes.find(option => normalizar(option.label).includes(esperado));
   if (!opcao) throw new CctUnavailableError(`Opcao ${textoEsperado} nao encontrada no campo ${campo}`);
   await select.selectOption(opcao.value);
+}
+
+export function anoMaisRecenteDisponivel(textos: string[], anoLimite: number): number | undefined {
+  const anos = textos.flatMap(texto => texto.match(/\b(?:19|20)\d{2}\b/g)?.map(Number) ?? [])
+    .filter(ano => ano <= anoLimite);
+  return anos.length > 0 ? Math.max(...anos) : undefined;
 }
 
 async function localizarPrimeiro(page: Page, seletores: string[], campo: string): Promise<ReturnType<Page['locator']>> {
@@ -47,7 +64,8 @@ async function localizarPrimeiro(page: Page, seletores: string[], campo: string)
   throw new CctUnavailableError(`Seletor do campo ${campo} nao encontrado no Mediador: ${seletores.join(', ')}`);
 }
 
-type ConsultaMediador = { texto: string; pdf?: Buffer; fonteUrl: string };
+type ConsultaMediador = { texto: string; pdf?: Buffer; fonteUrl: string; anoVigencia: number };
+export type ResultadoBuscaCct = { texto: string; anoVigencia: number; fonteUrl?: string };
 
 export const MTE_ANTI_BOT_PATTERNS = [
   /just a moment/i,
@@ -63,7 +81,7 @@ export function detectarDesafioAntiBot(titulo: string, corpo: string): boolean {
   return MTE_ANTI_BOT_PATTERNS.some(padrao => padrao.test(texto));
 }
 
-export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promise<string> {
+export async function buscarESalvarCCTComAno(cnpj: string, anoVigencia: number): Promise<ResultadoBuscaCct> {
   const cnpjNormalizado = normalizarCnpj(cnpj);
   const cache = await prisma.convencaoColetiva.findUnique({
     where: { cnpjSindicato_anoVigencia: { cnpjSindicato: cnpjNormalizado, anoVigencia } }
@@ -72,7 +90,9 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
     throw new CctManualDownloadRequiredError(`CCT ${cnpjNormalizado}/${anoVigencia} aguarda PDF manual.`);
   }
   const cacheAtual = cache && cache.status !== 'PENDENTE_DOWNLOAD_MANUAL' && Date.now() - cache.dataAtualizacao.getTime() < CACHE_TTL_MS;
-  if (cacheAtual) return cache.textoCompleto;
+  if (cacheAtual && temTextoCctUtilizavel(cache.textoCompleto)) {
+    return { texto: cache.textoCompleto, anoVigencia, fonteUrl: cache.fonteUrl ?? undefined };
+  }
 
   let ultimoErro: unknown;
   for (let tentativa = 1; tentativa <= env.mteMaxAttempts; tentativa += 1) {
@@ -103,16 +123,21 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
       const context = await browser.newContext();
       const page = await context.newPage();
       const consulta = await consultarMediador(page, context, cnpjNormalizado, anoVigencia);
+      const cacheDaConsulta = consulta.anoVigencia === anoVigencia
+        ? cache
+        : await prisma.convencaoColetiva.findUnique({
+          where: { cnpjSindicato_anoVigencia: { cnpjSindicato: cnpjNormalizado, anoVigencia: consulta.anoVigencia } }
+        });
       const documento = consulta.pdf
         ? await storePdf(
             consulta.pdf,
             env.documentStoragePath,
-            `${cnpjNormalizado}-${anoVigencia}-${cryptoHash(consulta.pdf)}.pdf`
+            `${cnpjNormalizado}-${consulta.anoVigencia}-${cryptoHash(consulta.pdf)}.pdf`
           )
         : undefined;
 
       const cct = await prisma.convencaoColetiva.upsert({
-        where: { cnpjSindicato_anoVigencia: { cnpjSindicato: cnpjNormalizado, anoVigencia } },
+        where: { cnpjSindicato_anoVigencia: { cnpjSindicato: cnpjNormalizado, anoVigencia: consulta.anoVigencia } },
         update: {
           textoCompleto: consulta.texto,
           fonteUrl: consulta.fonteUrl,
@@ -122,7 +147,7 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
         },
         create: {
           cnpjSindicato: cnpjNormalizado,
-          anoVigencia,
+          anoVigencia: consulta.anoVigencia,
           textoCompleto: consulta.texto,
           fonteUrl: consulta.fonteUrl,
           documentoStoragePath: documento?.storagePath,
@@ -141,11 +166,11 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
           }
         });
       }
-      if (!cache || cache.textoCompleto !== consulta.texto) {
-        await criarAlertaNovaCct(cnpjNormalizado, anoVigencia).catch(error => console.warn('[ALERTA] Nao foi possivel criar alerta MTE:', error));
+      if (!cacheDaConsulta || cacheDaConsulta.textoCompleto !== consulta.texto) {
+        await criarAlertaNovaCct(cnpjNormalizado, consulta.anoVigencia).catch(error => console.warn('[ALERTA] Nao foi possivel criar alerta MTE:', error));
       }
       await browser.close();
-      return consulta.texto;
+      return { texto: consulta.texto, anoVigencia: consulta.anoVigencia, fonteUrl: consulta.fonteUrl };
     } catch (error) {
       ultimoErro = error;
       await browser.close();
@@ -167,12 +192,80 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
     });
     throw new CctUnavailableError(`CCT aguardando download manual após bloqueio do Mediador: ${String(ultimoErro)}`);
   }
-  if (cache) return cache.textoCompleto;
+  if (temTextoCctUtilizavel(cache?.textoCompleto)) {
+    return { texto: cache.textoCompleto, anoVigencia, fonteUrl: cache.fonteUrl ?? undefined };
+  }
+  const cacheAnterior = await prisma.convencaoColetiva.findFirst({
+    where: {
+      cnpjSindicato: cnpjNormalizado,
+      anoVigencia: { lt: anoVigencia },
+      status: { not: 'PENDENTE_DOWNLOAD_MANUAL' }
+    },
+    orderBy: { anoVigencia: 'desc' }
+  });
+  if (temTextoCctUtilizavel(cacheAnterior?.textoCompleto)) {
+    return {
+      texto: cacheAnterior.textoCompleto,
+      anoVigencia: cacheAnterior.anoVigencia,
+      fonteUrl: cacheAnterior.fonteUrl ?? undefined
+    };
+  }
   throw new CctUnavailableError(`CCT indisponivel no momento: ${String(ultimoErro)}`);
+}
+
+export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promise<string> {
+  return (await buscarESalvarCCTComAno(cnpj, anoVigencia)).texto;
 }
 
 function cryptoHash(buffer: Buffer): string {
   return crypto.createHash('sha256').update(buffer).digest('hex');
+}
+
+async function pesquisarResultadosMediador(
+  page: Page,
+  botaoPesquisar: ReturnType<Page['locator']>,
+  anoLimite: number,
+  anoFallback: number,
+  priorizarPrimeiro: boolean
+): Promise<{ link: ReturnType<Page['locator']>; anoVigencia: number } | null> {
+  const navegacao = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10_000 }).catch(() => undefined);
+  await botaoPesquisar.click();
+  await Promise.race([navegacao, wait(1_000)]);
+  await page.waitForSelector([env.mteResultSelector, 'table.tabelaResultados', '#tabelaResultados'].join(', '), {
+    state: 'visible',
+    timeout: env.mteNavigationTimeoutMs
+  });
+
+  const linhas = page.locator('table#tabelaResultados tbody tr');
+  const candidatas: Array<{ link: ReturnType<Page['locator']>; ano?: number; temAnoExplicito: boolean }> = [];
+  for (let indice = 0; indice < await linhas.count(); indice += 1) {
+    const linha = linhas.nth(indice);
+    const link = linha.locator('a').first();
+    if (await link.count() === 0) continue;
+    const texto = await linha.innerText();
+    candidatas.push({
+      link,
+      ano: anoMaisRecenteDisponivel([texto], anoLimite),
+      temAnoExplicito: /\b(?:19|20)\d{2}\b/.test(texto)
+    });
+  }
+
+  if (candidatas.length === 0) {
+    try {
+      const link = await localizarPrimeiro(page, [env.mteResultLinkSelector, 'table.tabelaResultados tbody tr:first-child a'], 'resultado da CCT');
+      return { link, anoVigencia: anoFallback };
+    } catch {
+      return null;
+    }
+  }
+
+  const escolhida = priorizarPrimeiro
+    ? candidatas[0]
+    : candidatas.filter(candidata => candidata.ano !== undefined)
+      .sort((a, b) => (b.ano ?? 0) - (a.ano ?? 0))[0]
+      ?? (candidatas.every(candidata => !candidata.temAnoExplicito) ? candidatas[0] : undefined);
+  if (!escolhida) return null;
+  return { link: escolhida.link, anoVigencia: escolhida.ano ?? anoFallback };
 }
 
 async function consultarMediador(page: Page, context: BrowserContext, cnpj: string, anoVigencia: number): Promise<ConsultaMediador> {
@@ -195,16 +288,30 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
     throw new CctCaptchaRequiredError('Mediador exige CAPTCHA; consulta automatica interrompida');
   }
   const campoCnpj = await localizarPrimeiro(page, [env.mteCnpjSelector, 'input[name="nrCnpjSindicatoLaboral"]'], 'CNPJ');
-  await campoCnpj.fill(cnpj);
+  const checkboxCnpj = page.locator('input[type="checkbox"]').first();
+  if (await checkboxCnpj.count() > 0 && await checkboxCnpj.isVisible().catch(() => false)) {
+    await checkboxCnpj.check();
+  }
+  await campoCnpj.fill(formatarCnpj(cnpj));
   await selecionarOpcaoPorTexto(page, env.mteTypeSelector, env.mteTypeLabel, 'tipo do instrumento');
-  await selecionarOpcaoPorTexto(page, env.mteValiditySelector, env.mteValidityLabel, 'vigencia');
-
   const botaoPesquisar = await localizarPrimeiro(page, [env.mteSearchSelector, 'input[type="submit"][value*="Pesquisar"]', 'button:has-text("Pesquisar")', 'a:has-text("Pesquisar")'], 'pesquisa');
-  await botaoPesquisar.click();
-  await page.waitForSelector([env.mteResultSelector, 'table.tabelaResultados', '#tabelaResultados'].join(', '), { state: 'visible', timeout: env.mteNavigationTimeoutMs });
+
+  const vigenciaConfigurada = env.mteValidityLabel.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+  const rotuloVigentes = vigenciaConfigurada.includes('vigentes') && !vigenciaConfigurada.includes('nao')
+    ? env.mteValidityLabel
+    : 'Vigentes';
+  await selecionarOpcaoPorTexto(page, env.mteValiditySelector, rotuloVigentes, 'vigencia');
+  let resultadoSelecionado = await pesquisarResultadosMediador(page, botaoPesquisar, anoVigencia, anoVigencia, true);
+
+  if (!resultadoSelecionado) {
+    const anoAnterior = anoVigencia - 1;
+    await selecionarOpcaoPorTexto(page, env.mteValiditySelector, 'Nao Vigentes', 'vigencia');
+    resultadoSelecionado = await pesquisarResultadosMediador(page, botaoPesquisar, anoAnterior, anoAnterior, false);
+  }
+  if (!resultadoSelecionado) throw new CctUnavailableError(`Mediador nao encontrou CCT vigente nem nao vigente de ${anoVigencia - 1}`);
+
   const popup = context.waitForEvent('page', { timeout: 10_000 }).catch(() => null);
-  const resultado = await localizarPrimeiro(page, [env.mteResultLinkSelector, 'table.tabelaResultados tbody tr:first-child a'], 'resultado da CCT');
-  await resultado.click();
+  await resultadoSelecionado.link.click();
   const documentPage = (await popup) ?? page;
   await documentPage.waitForLoadState('domcontentloaded');
   let texto = (await documentPage.locator('body').innerText()).trim();
@@ -222,7 +329,7 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
   }
   if (!texto) throw new CctUnavailableError('Mediador retornou uma CCT vazia');
   if (documentPage !== page) await documentPage.close();
-  return { texto, pdf: pdfBuffer, fonteUrl };
+  return { texto, pdf: pdfBuffer, fonteUrl, anoVigencia: resultadoSelecionado.anoVigencia };
 }
 
 export async function listarCnpjsCacheados(): Promise<Array<{ cnpjSindicato: string; anoVigencia: number }>> {
