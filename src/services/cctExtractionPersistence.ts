@@ -63,6 +63,7 @@ export async function persistirExtracaoCct(cnpjSindicato: string, anoVigencia: n
     return tx.convencaoColetiva.update({
       where: { id: cct.id },
       data: {
+        status: 'EXTRAIDA',
         parametrosJson: JSON.stringify(extracao),
         resumoCct: extracao.resumo_mudancas
       },

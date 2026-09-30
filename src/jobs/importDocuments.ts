@@ -1,7 +1,7 @@
 import { env } from '../config/env';
 import { prisma } from '../db';
 import { mimeSuportado } from '../services/aiDocumentReader';
-import { extrairCadastrosDeDocumento, lerCadastroSindicalCsv, lerCadastroSindicalExcel, montarLinhasImportacao } from '../services/documentImport';
+import { extrairCadastrosDeDocumento, identificarPdfCctManual, lerCadastroSindicalCsv, lerCadastroSindicalExcel, montarLinhasImportacao } from '../services/documentImport';
 import {
   appendAdminRows,
   baixarArquivoDrive,
@@ -30,7 +30,8 @@ export async function importarDocumentosDoDrive(): Promise<ResumoImportacaoDocum
     return null;
   }
 
-  const pendentes = await listarDocumentosPendentes(env.googleDriveInboxFolderId, process.env.RETRY_FAILED_UNION_IMPORTS === 'true');
+  const pendentes = (await listarDocumentosPendentes(env.googleDriveInboxFolderId, process.env.RETRY_FAILED_UNION_IMPORTS === 'true'))
+    .filter(documento => !identificarPdfCctManual(documento.nome));
   const resumo: ResumoImportacaoDocumentos = { documentos: pendentes.length, importados: 0, comErro: 0, empresas: 0, sindicatos: 0 };
   if (pendentes.length === 0) {
     console.info('[DOCS] Nenhum documento novo na pasta de entrada.');

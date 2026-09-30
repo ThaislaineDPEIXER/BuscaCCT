@@ -41,6 +41,22 @@ export type LinhasImportacao = {
   duplicadas: number;
 };
 
+export type CctManualTarget = { cnpjSindicato: string; anoVigencia: number };
+
+export function identificarPdfCctManual(nome: string): CctManualTarget | null {
+  const match = nome.match(/^CCT-(\d{14})-(20\d{2})\.pdf$/i);
+  if (!match) return null;
+  const anoVigencia = Number(match[2]);
+  if (anoVigencia < 2000 || anoVigencia > 2100) return null;
+  return { cnpjSindicato: match[1], anoVigencia };
+}
+
+export function textoContemCnpj(texto: string, cnpj: string): boolean {
+  const digitosTexto = texto.replace(/\D/g, '');
+  const digitosCnpj = cnpj.replace(/\D/g, '');
+  return digitosCnpj.length === 14 && digitosTexto.includes(digitosCnpj);
+}
+
 function normalizarCabecalho(valor: string): string {
   return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim();
 }

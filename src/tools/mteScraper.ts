@@ -11,6 +11,7 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 export class CctUnavailableError extends Error {}
 export class CctCaptchaRequiredError extends CctUnavailableError {}
 export class CctAccessBlockedError extends CctUnavailableError {}
+export class CctManualDownloadRequiredError extends CctUnavailableError {}
 
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
@@ -59,7 +60,10 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
   const cache = await prisma.convencaoColetiva.findUnique({
     where: { cnpjSindicato_anoVigencia: { cnpjSindicato: cnpjNormalizado, anoVigencia } }
   });
-  const cacheAtual = cache && Date.now() - cache.dataAtualizacao.getTime() < CACHE_TTL_MS;
+  if (cache?.status === 'PENDENTE_DOWNLOAD_MANUAL') {
+    throw new CctManualDownloadRequiredError(`CCT ${cnpjNormalizado}/${anoVigencia} aguarda PDF manual.`);
+  }
+  const cacheAtual = cache && cache.status !== 'PENDENTE_DOWNLOAD_MANUAL' && Date.now() - cache.dataAtualizacao.getTime() < CACHE_TTL_MS;
   if (cacheAtual) return cache.textoCompleto;
 
   let ultimoErro: unknown;
@@ -118,6 +122,20 @@ export async function buscarESalvarCCT(cnpj: string, anoVigencia: number): Promi
       if (error instanceof CctCaptchaRequiredError || error instanceof CctAccessBlockedError) break;
       if (tentativa < env.mteMaxAttempts) await wait(2_000 * tentativa);
     }
+  }
+  if (ultimoErro instanceof CctAccessBlockedError || ultimoErro instanceof CctCaptchaRequiredError) {
+    await prisma.convencaoColetiva.upsert({
+      where: { cnpjSindicato_anoVigencia: { cnpjSindicato: cnpjNormalizado, anoVigencia } },
+      update: { status: 'PENDENTE_DOWNLOAD_MANUAL', fonteTipo: 'MTE' },
+      create: {
+        cnpjSindicato: cnpjNormalizado,
+        anoVigencia,
+        textoCompleto: '',
+        fonteTipo: 'MTE',
+        status: 'PENDENTE_DOWNLOAD_MANUAL'
+      }
+    });
+    throw new CctUnavailableError(`CCT aguardando download manual após bloqueio do Mediador: ${String(ultimoErro)}`);
   }
   if (cache) return cache.textoCompleto;
   throw new CctUnavailableError(`CCT indisponivel no momento: ${String(ultimoErro)}`);

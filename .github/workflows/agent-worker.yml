@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       retry_failed_union_imports:
-        description: 'Reprocessar planilhas sindicais com erro na pasta de entrada'
+        description: 'Reprocessar planilhas sindicais e PDFs manuais de CCT com erro'
         type: boolean
         default: false
 

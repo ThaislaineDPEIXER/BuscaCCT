@@ -9,9 +9,12 @@ import { notificarFalhaMte } from '../services/operationalAlert';
 import { varrerSindicato } from '../services/radarDiscovery';
 import { adquirirWorkerLock } from '../services/workerLock';
 import { resolveStoredDocumentPath } from '../services/documentStorage';
+import { storePdf } from '../services/documentStorage';
 import { STATUS_ENQUADRAMENTO, rotuloStatusEnquadramento } from '../services/enquadramentoStatus';
-import { appendRowToSheet, ensureCctDashboard, syncEnquadramentoMatrix, uploadPdfToDrive } from '../services/googleWorkspace';
-import { buscarESalvarCCT } from '../tools/mteScraper';
+import { appendRowToSheet, baixarArquivoDrive, ensureCctDashboard, listarDocumentosPendentes, marcarDocumento, syncEnquadramentoMatrix, uploadPdfToDrive } from '../services/googleWorkspace';
+import { extrairTextoPdf } from '../services/cctOcr';
+import { identificarPdfCctManual, textoContemCnpj } from '../services/documentImport';
+import { buscarESalvarCCT, CctAccessBlockedError, CctCaptchaRequiredError } from '../tools/mteScraper';
 import { importarDocumentosDoDrive } from './importDocuments';
 import { syncAdminSheets } from './syncAdminSheets';
 
@@ -70,6 +73,7 @@ async function sincronizarMatrizEnquadramento(): Promise<void> {
 
 type SindicatoPainel = { cnpj: string; razaoSocial: string; codigoSindical: string | null };
 type EmpresaPainel = { razaoSocial: string; codigoErp: string | null; cctRegistro: string | null };
+const TAMANHO_MAXIMO_CCT_MANUAL = 30 * 1024 * 1024;
 
 const formatarCnpj = (cnpj: string) =>
   /^\d{14}$/.test(cnpj) ? cnpj.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5') : cnpj;
@@ -136,15 +140,128 @@ async function publicarCctNoWorkspace(sindicato: SindicatoPainel, anoVigencia: n
   ));
 }
 
+async function processarCctsManuaisDoDrive(): Promise<void> {
+  if (env.documentStorageDriver !== 'workspace' || !env.googleDriveInboxFolderId) return;
+  const pendentes = await listarDocumentosPendentes(
+    env.googleDriveInboxFolderId,
+    process.env.RETRY_FAILED_UNION_IMPORTS === 'true'
+  );
+  const pdfs = pendentes.filter(documento => documento.mimeType === 'application/pdf' && identificarPdfCctManual(documento.nome));
+  if (pdfs.length === 0) {
+    console.info('[CCT-MANUAL] Nenhum PDF manual de CCT pendente.');
+    return;
+  }
+
+  for (const documento of pdfs) {
+    const alvo = identificarPdfCctManual(documento.nome);
+    if (!alvo) continue;
+    try {
+      if (documento.tamanho > TAMANHO_MAXIMO_CCT_MANUAL) {
+        throw new Error(`PDF acima de ${TAMANHO_MAXIMO_CCT_MANUAL / 1024 / 1024} MB.`);
+      }
+      const sindicato = await prisma.sindicato.findUnique({
+        where: { cnpj: alvo.cnpjSindicato },
+        select: { id: true, cnpj: true, razaoSocial: true, codigoSindical: true, ativo: true }
+      });
+      if (!sindicato) throw new Error(`Sindicato ${alvo.cnpjSindicato} não está cadastrado.`);
+      const cctExistente = await prisma.convencaoColetiva.findUnique({
+        where: { cnpjSindicato_anoVigencia: { cnpjSindicato: alvo.cnpjSindicato, anoVigencia: alvo.anoVigencia } },
+        select: { id: true, status: true }
+      });
+      if (cctExistente?.status !== 'PENDENTE_DOWNLOAD_MANUAL') {
+        throw new Error(`Não há pendência manual para ${alvo.cnpjSindicato}/${alvo.anoVigencia}.`);
+      }
+
+      const pdf = await baixarArquivoDrive(documento.id);
+      if (pdf.subarray(0, 5).toString('ascii') !== '%PDF-') throw new Error('O arquivo não tem assinatura PDF válida.');
+      const texto = await extrairTextoPdf(pdf);
+      if (!textoContemCnpj(texto, alvo.cnpjSindicato)) {
+        throw new Error(`O texto extraído não contém o CNPJ ${alvo.cnpjSindicato}; associação manual recusada.`);
+      }
+      const extracao = await extrairCctComIa(texto);
+      const armazenado = await storePdf(
+        pdf,
+        env.documentStoragePath,
+        `manual-${alvo.cnpjSindicato}-${alvo.anoVigencia}-${documento.id}.pdf`
+      );
+      const linkOrigem = `https://drive.google.com/file/d/${documento.id}/view`;
+      const cct = await prisma.convencaoColetiva.upsert({
+        where: { cnpjSindicato_anoVigencia: { cnpjSindicato: alvo.cnpjSindicato, anoVigencia: alvo.anoVigencia } },
+        update: {
+          textoCompleto: texto,
+          fonteTipo: 'UPLOAD_MANUAL',
+          fonteUrl: linkOrigem,
+          documentoStoragePath: armazenado.storagePath,
+          hashDocumento: armazenado.hashSha256,
+          status: 'CAPTURADA'
+        },
+        create: {
+          cnpjSindicato: alvo.cnpjSindicato,
+          anoVigencia: alvo.anoVigencia,
+          textoCompleto: texto,
+          fonteTipo: 'UPLOAD_MANUAL',
+          fonteUrl: linkOrigem,
+          documentoStoragePath: armazenado.storagePath,
+          hashDocumento: armazenado.hashSha256,
+          status: 'CAPTURADA'
+        }
+      });
+      const evidencia = await prisma.evidenciaCct.findFirst({
+        where: { convencaoColetivaId: cct.id, hashSha256: armazenado.hashSha256 },
+        select: { id: true }
+      });
+      if (!evidencia) {
+        await prisma.evidenciaCct.create({
+          data: {
+            convencaoColetivaId: cct.id,
+            tipo: 'DOCUMENTO_MANUAL',
+            url: linkOrigem,
+            storagePath: armazenado.storagePath,
+            hashSha256: armazenado.hashSha256,
+            referencia: 'PDF da CCT enviado manualmente para contornar indisponibilidade do Mediador.'
+          }
+        });
+      }
+
+      await persistirExtracaoCct(alvo.cnpjSindicato, alvo.anoVigencia, extracao);
+      await prisma.sindicato.update({
+        where: { id: sindicato.id },
+        data: { ultimaVarredura: new Date(), proximaTentativa: null, falhasConsecutivas: 0 }
+      });
+      await publicarCctNoWorkspace(sindicato, alvo.anoVigencia);
+      await marcarDocumento(documento.id, 'importado', `${alvo.cnpjSindicato}/${alvo.anoVigencia}: CCT manual extraída`);
+      console.info(`[CCT-MANUAL] ${documento.nome}: extração concluída para ${sindicato.cnpj}/${alvo.anoVigencia}.`);
+    } catch (error) {
+      const detalhe = error instanceof Error ? error.message : String(error);
+      console.error(`[CCT-MANUAL] Falha ao processar "${documento.nome}":`, detalhe);
+      await marcarDocumento(documento.id, 'erro', detalhe).catch(markError => {
+        console.error(`[CCT-MANUAL] Não foi possível marcar "${documento.nome}" com erro:`, markError);
+      });
+    }
+  }
+}
+
 async function selecionarFila() {
   const agora = new Date();
   const limite = new Date(agora.getTime() - env.mteStaleAfterHours * 60 * 60 * 1_000);
+  const cacheCctDesde = new Date(agora.getTime() - 24 * 60 * 60 * 1_000);
   const mesAtual = agora.getMonth() + 1;
+  const anoAtual = agora.getFullYear();
 
   return prisma.sindicato.findMany({
     where: {
       ativo: true,
       enquadramentos: { some: { status: STATUS_ENQUADRAMENTO.CONFIRMADO } },
+      convencoes: {
+        none: {
+          anoVigencia: anoAtual,
+          OR: [
+            { status: 'PENDENTE_DOWNLOAD_MANUAL' },
+            { status: 'EXTRAIDA', dataAtualizacao: { gte: cacheCctDesde } },
+            { status: 'EXTRAIDA', fonteTipo: 'UPLOAD_MANUAL' }
+          ]
+        }
+      },
       AND: [
         { OR: [{ proximaTentativa: null }, { proximaTentativa: { lte: agora } }] },
         { OR: [
@@ -184,6 +301,12 @@ export async function executarFilaMte(): Promise<void> {
       await sincronizarMatrizEnquadramento();
     } catch (error) {
       console.warn('[WORKSPACE] Matriz de enquadramento não sincronizada; a fila segue normalmente:', error);
+    }
+
+    try {
+      await processarCctsManuaisDoDrive();
+    } catch (error) {
+      console.error('[CCT-MANUAL] Falha ao processar PDFs manuais; o worker seguirá com a fila:', error);
     }
 
     const sindicatos = await selecionarFila();

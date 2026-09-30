@@ -4,7 +4,7 @@ import * as XLS from '@e965/xlsx';
 
 import { EMPRESA_HEADERS, SINDICATO_HEADERS } from '../src/services/adminSheetParser';
 import { mimeSuportado } from '../src/services/aiDocumentReader';
-import { interpretarExtracao, montarLinhasImportacao, lerCadastroSindicalCsv, lerCadastroSindicalExcel } from '../src/services/documentImport';
+import { identificarPdfCctManual, interpretarExtracao, montarLinhasImportacao, lerCadastroSindicalCsv, lerCadastroSindicalExcel, textoContemCnpj } from '../src/services/documentImport';
 
 const coluna = (header: typeof EMPRESA_HEADERS[number]) => EMPRESA_HEADERS.indexOf(header);
 
@@ -52,6 +52,22 @@ test('mimeSuportado aceita PDF e imagens e recusa outros formatos', () => {
   assert.equal(mimeSuportado('image/jpeg'), true);
   assert.equal(mimeSuportado('application/vnd.google-apps.document'), false);
   assert.equal(mimeSuportado(undefined), false);
+});
+
+test('identificarPdfCctManual exige CNPJ e ano no nome do PDF', () => {
+  assert.deepEqual(identificarPdfCctManual('CCT-79831442000130-2026.pdf'), {
+    cnpjSindicato: '79831442000130',
+    anoVigencia: 2026
+  });
+  assert.equal(identificarPdfCctManual('CCT-SINDPD-2026.pdf'), null);
+  assert.equal(identificarPdfCctManual('CCT-79831442000130-1999.pdf'), null);
+  assert.equal(identificarPdfCctManual('cartao-cnpj.pdf'), null);
+});
+
+test('textoContemCnpj exige que o CNPJ informado apareça no documento extraído', () => {
+  assert.equal(textoContemCnpj('SINDICATO: 79.831.442/0001-30', '79831442000130'), true);
+  assert.equal(textoContemCnpj('SINDICATO: 80.673.387/0001-86', '79831442000130'), false);
+  assert.equal(textoContemCnpj('sem CNPJ', '79831442000130'), false);
 });
 
 test('lerCadastroSindicalExcel preserva linhas de cadastro e deduplica sem criar vinculos', () => {

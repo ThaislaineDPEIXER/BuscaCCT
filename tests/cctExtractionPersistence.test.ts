@@ -60,6 +60,7 @@ test('persistirExtracaoCct grava impactos e contribuições na CCT correta', asy
 
   const resultado = await persistirExtracaoCct(sindicato.cnpj, cct.anoVigencia, extracao);
   assert.equal(resultado.parametrosJson, JSON.stringify(extracao));
+  assert.equal(resultado.status, 'EXTRAIDA');
   assert.equal(resultado.impactosFolha.length, 1);
   assert.equal(resultado.impactosFolha[0].valorNovo, 1950);
   assert.equal(resultado.contribuicoes.length, 1);

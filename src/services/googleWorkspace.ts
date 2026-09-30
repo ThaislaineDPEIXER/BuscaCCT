@@ -121,7 +121,7 @@ export async function listarDocumentosPendentes(folderId: string, reprocessarPla
   for (const pastaId of pastas) {
     let pageToken: string | undefined;
     do {
-      const reprocessarNestaPasta = reprocessarPlanilhasSindicais && pastaId !== folderId;
+      const reprocessarNestaPasta = reprocessarPlanilhasSindicais;
       const pagina = await drive.files.list({
         q: [
           `'${pastaId}' in parents`,
@@ -138,12 +138,17 @@ export async function listarDocumentosPendentes(folderId: string, reprocessarPla
         includeItemsFromAllDrives: true
       });
       for (const arquivo of pagina.data.files ?? []) {
-        if (arquivo.appProperties?.[PROPRIEDADE_IMPORTACAO] === 'erro' && ![
+        const nome = arquivo.name ?? '';
+        const excelSindical = [
           'application/vnd.ms-excel',
           'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
           'text/csv',
           'application/csv'
-        ].includes(arquivo.mimeType ?? '') && !arquivo.name?.toLowerCase().endsWith('.csv')) continue;
+        ].includes(arquivo.mimeType ?? '') || nome.toLowerCase().endsWith('.csv');
+        const pdfCctManual = /^CCT-\d{14}-20\d{2}\.pdf$/i.test(nome);
+        if (arquivo.appProperties?.[PROPRIEDADE_IMPORTACAO] === 'erro' && !(
+          pdfCctManual || (pastaId !== folderId && excelSindical)
+        )) continue;
         if (arquivo.id && arquivo.name) {
           documentos.push({ id: arquivo.id, nome: arquivo.name, mimeType: arquivo.mimeType ?? '', tamanho: Number(arquivo.size ?? 0) });
         }
