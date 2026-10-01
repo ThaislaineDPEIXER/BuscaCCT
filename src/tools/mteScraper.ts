@@ -56,12 +56,13 @@ export function anoMaisRecenteDisponivel(textos: string[], anoLimite: number): n
   return anos.length > 0 ? Math.max(...anos) : undefined;
 }
 
-async function localizarPrimeiro(page: Page, seletores: string[], campo: string): Promise<ReturnType<Page['locator']>> {
+async function localizarPrimeiro(page: Page, seletores: string[], campo: string, exigirVisivel = false): Promise<ReturnType<Page['locator']>> {
   for (const seletor of seletores) {
     const locator = page.locator(seletor);
-    if (await locator.count() > 0) return locator.first();
+    if (await locator.count() > 0 && (!exigirVisivel || await locator.first().isVisible().catch(() => false))) return locator.first();
   }
-  throw new CctUnavailableError(`Seletor do campo ${campo} nao encontrado no Mediador: ${seletores.join(', ')}`);
+  const estado = exigirVisivel ? 'nao encontrado ou invisivel' : 'nao encontrado';
+  throw new CctUnavailableError(`Seletor do campo ${campo} ${estado} no Mediador: ${seletores.join(', ')}`);
 }
 
 type ConsultaMediador = { texto: string; pdf?: Buffer; fonteUrl: string; anoVigencia: number };
@@ -287,7 +288,7 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
   if (await captcha.isVisible().catch(() => false)) {
     throw new CctCaptchaRequiredError('Mediador exige CAPTCHA; consulta automatica interrompida');
   }
-  const campoCnpj = await localizarPrimeiro(page, [
+  const seletoresCnpj = [
     env.mteCnpjSelector,
     'input[name="nrCnpjSindicatoLaboral"]',
     'input[name$="txbCnpjCei" i]',
@@ -296,7 +297,12 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
     'input[name*="cnpj" i]',
     'input[id*="cnpj" i]',
     'input[placeholder*="00.000.000"]'
-  ], 'CNPJ');
+  ];
+  await page.waitForSelector(seletoresCnpj.join(', '), {
+    state: 'visible',
+    timeout: env.mteNavigationTimeoutMs
+  });
+  const campoCnpj = await localizarPrimeiro(page, seletoresCnpj, 'CNPJ', true);
   const checkboxCnpj = page.locator('input[type="checkbox"]').first();
   if (await checkboxCnpj.count() > 0 && await checkboxCnpj.isVisible().catch(() => false)) {
     await checkboxCnpj.check();
