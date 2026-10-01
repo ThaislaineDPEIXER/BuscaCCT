@@ -1,17 +1,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { anoMaisRecenteDisponivel, CctAccessBlockedError, CctCaptchaRequiredError, CctUnavailableError, detectarDesafioAntiBot, detectarSemResultadosMediador, deveIgnorarPendenciaManual, formatarCnpj, temTextoCctUtilizavel } from '../src/tools/mteScraper';
+import { anoMaisRecenteDisponivel, CctAccessBlockedError, CctCaptchaRequiredError, CctNoResultsError, CctUnavailableError, detectarDesafioAntiBot, detectarSemResultadosMediador, deveIgnorarPendenciaManual, deveInvalidarExtracaoCct, formatarCnpj, temTextoCctUtilizavel } from '../src/tools/mteScraper';
 
 test('exceções do scraper devem manter a hierarquia correta', () => {
   const captcha = new CctCaptchaRequiredError('captchas');
   const bloqueado = new CctAccessBlockedError('bloqueado');
+  const semResultados = new CctNoResultsError('sem resultados');
   const indisponivel = new CctUnavailableError('indisponivel');
 
   assert.ok(captcha instanceof Error);
   assert.ok(indisponivel instanceof Error);
   assert.ok(captcha instanceof CctUnavailableError);
   assert.ok(bloqueado instanceof CctUnavailableError);
+  assert.ok(semResultados instanceof CctUnavailableError);
   assert.match(captcha.message, /captchas/i);
 });
 
@@ -39,6 +41,12 @@ test('cache vazio ou composto apenas por espaços não é um texto de CCT utiliz
   assert.equal(temTextoCctUtilizavel(''), false);
   assert.equal(temTextoCctUtilizavel('   \n'), false);
   assert.equal(temTextoCctUtilizavel('Texto da convenção'), true);
+});
+
+test('extração é invalidada quando o texto da CCT muda ou ainda não foi capturado', () => {
+  assert.equal(deveInvalidarExtracaoCct(undefined, 'Texto novo'), true);
+  assert.equal(deveInvalidarExtracaoCct('Texto antigo', 'Texto novo'), true);
+  assert.equal(deveInvalidarExtracaoCct('Mesmo texto', 'Mesmo texto'), false);
 });
 
 test('fallback escolhe o ano mais recente sem ultrapassar o ano anterior', () => {

@@ -52,13 +52,10 @@ moduloDpRoutes.get('/parametros-cct/:cnpj', async (req, res) => {
 
   try {
     const anoAtual = new Date().getFullYear();
-    const cct = await prisma.convencaoColetiva.findFirst({
-      where: { cnpjSindicato: cnpj },
-      orderBy: { anoVigencia: 'desc' }
-    });
-
     const resultadoCct = await buscarESalvarCCTComAno(cnpj, anoAtual);
-    const cctDoResultado = cct?.anoVigencia === resultadoCct.anoVigencia ? cct : null;
+    const cctDoResultado = await prisma.convencaoColetiva.findUnique({
+      where: { cnpjSindicato_anoVigencia: { cnpjSindicato: cnpj, anoVigencia: resultadoCct.anoVigencia } }
+    });
     let parametros: Awaited<ReturnType<typeof extrairCctComIa>>;
     let precisaPersistir = !cctDoResultado?.parametrosJson;
     if (cctDoResultado?.parametrosJson) {

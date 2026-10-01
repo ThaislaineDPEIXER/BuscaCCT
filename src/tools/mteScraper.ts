@@ -14,6 +14,7 @@ const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const PADRAO_SEM_RESULTADOS_MTE = /nenhum\s+(?:resultado|registro|instrumento|documento)|nao\s+foram\s+encontrad[oa]s|nao\s+ha\s+resultados|sem\s+resultados|consulta\s+nao\s+retornou\s+resultados/i;
 
 export class CctUnavailableError extends Error {}
+export class CctNoResultsError extends CctUnavailableError {}
 export class CctCaptchaRequiredError extends CctUnavailableError {}
 export class CctAccessBlockedError extends CctUnavailableError {}
 export class CctManualDownloadRequiredError extends CctUnavailableError {}
@@ -24,6 +25,10 @@ export function deveIgnorarPendenciaManual(status: string | undefined, reprocess
 
 export function temTextoCctUtilizavel(texto: string | undefined): texto is string {
   return Boolean(texto?.trim());
+}
+
+export function deveInvalidarExtracaoCct(textoAnterior: string | null | undefined, textoAtual: string): boolean {
+  return !textoAnterior || textoAnterior !== textoAtual;
 }
 
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -204,14 +209,20 @@ export async function buscarESalvarCCTComAno(cnpj: string, anoVigencia: number):
             `${cnpjNormalizado}-${consulta.anoVigencia}-${cryptoHash(consulta.pdf)}.pdf`
           )
         : undefined;
+      const invalidarExtracao = deveInvalidarExtracaoCct(cacheDaConsulta?.textoCompleto, consulta.texto);
+      const liberarPendenciaManual = cacheDaConsulta?.status === 'PENDENTE_DOWNLOAD_MANUAL';
 
       const cct = await prisma.convencaoColetiva.upsert({
         where: { cnpjSindicato_anoVigencia: { cnpjSindicato: cnpjNormalizado, anoVigencia: consulta.anoVigencia } },
         update: {
           textoCompleto: consulta.texto,
           fonteUrl: consulta.fonteUrl,
-          documentoStoragePath: documento?.storagePath,
-          hashDocumento: documento?.hashSha256,
+          documentoStoragePath: documento?.storagePath ?? (invalidarExtracao ? null : undefined),
+          hashDocumento: documento?.hashSha256 ?? (invalidarExtracao ? null : undefined),
+          fonteTipo: invalidarExtracao ? 'MTE' : undefined,
+          status: invalidarExtracao || liberarPendenciaManual ? 'CAPTURADA' : undefined,
+          parametrosJson: invalidarExtracao ? null : undefined,
+          resumoCct: invalidarExtracao ? null : undefined,
           dataConsulta: new Date()
         },
         create: {
@@ -243,7 +254,7 @@ export async function buscarESalvarCCTComAno(cnpj: string, anoVigencia: number):
     } catch (error) {
       ultimoErro = error;
       await browser.close();
-      if (error instanceof CctCaptchaRequiredError || error instanceof CctAccessBlockedError) break;
+      if (error instanceof CctCaptchaRequiredError || error instanceof CctAccessBlockedError || error instanceof CctNoResultsError) break;
       if (tentativa < env.mteMaxAttempts) await wait(2_000 * tentativa);
     }
   }
@@ -302,8 +313,8 @@ async function pesquisarResultadosMediador(
   await Promise.race([navegacao, wait(1_000)]);
   const seletorResultados = [env.mteResultSelector, 'table.tabelaResultados', '#tabelaResultados'].join(', ');
   const resultadoHandle = await page.waitForFunction(({ seletor, padraoSemResultados }) => {
-    const tabela = document.querySelector(seletor);
-    if (tabela && (tabela as HTMLElement).getClientRects().length > 0) return 'resultados';
+    const tabelas = Array.from(document.querySelectorAll(seletor));
+    if (tabelas.some(tabela => (tabela as HTMLElement).getClientRects().length > 0)) return 'resultados';
     const texto = (document.body?.innerText ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
     return new RegExp(padraoSemResultados, 'i').test(texto) ? 'sem-resultados' : false;
   }, { seletor: seletorResultados, padraoSemResultados: PADRAO_SEM_RESULTADOS_MTE.source }, { timeout: env.mteNavigationTimeoutMs })
@@ -333,7 +344,8 @@ async function pesquisarResultadosMediador(
     throw new CctUnavailableError(`Mediador nao apresentou resultados apos a pesquisa. URL: ${page.url()}; titulo: ${titulo}; tabelas: ${JSON.stringify(tabelas)}; texto: ${corpo.substring(0, 500).replace(/\s+/g, ' ')}`);
   }
 
-  const linhas = page.locator('table#tabelaResultados tbody tr');
+  const tabelaResultados = page.locator(seletorResultados).filter({ visible: true }).first();
+  const linhas = tabelaResultados.locator('tbody tr');
   const candidatas: Array<{ link: ReturnType<Page['locator']>; ano?: number; temAnoExplicito: boolean }> = [];
   for (let indice = 0; indice < await linhas.count(); indice += 1) {
     const linha = linhas.nth(indice);
@@ -348,8 +360,10 @@ async function pesquisarResultadosMediador(
   }
 
   if (candidatas.length === 0) {
+    const primeiroLink = tabelaResultados.locator('tbody tr:first-child a').first();
+    if (await primeiroLink.count() > 0) return { link: primeiroLink, anoVigencia: anoFallback };
     try {
-      const link = await localizarPrimeiro(page, [env.mteResultLinkSelector, 'table.tabelaResultados tbody tr:first-child a'], 'resultado da CCT');
+      const link = await localizarPrimeiro(page, [env.mteResultLinkSelector], 'resultado da CCT');
       return { link, anoVigencia: anoFallback };
     } catch {
       return null;
@@ -419,7 +433,7 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
     await selecionarOpcaoPorTexto(page, env.mteValiditySelector, 'Nao Vigentes', 'vigencia');
     resultadoSelecionado = await pesquisarResultadosMediador(page, botaoPesquisar, anoAnterior, anoAnterior, false);
   }
-  if (!resultadoSelecionado) throw new CctUnavailableError(`Mediador nao encontrou CCT vigente nem nao vigente de ${anoVigencia - 1}`);
+  if (!resultadoSelecionado) throw new CctNoResultsError(`Mediador nao encontrou CCT vigente nem nao vigente de ${anoVigencia - 1}`);
 
   const popup = context.waitForEvent('page', { timeout: 10_000 }).catch(() => null);
   await resultadoSelecionado.link.click();
