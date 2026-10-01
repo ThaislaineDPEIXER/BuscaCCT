@@ -38,16 +38,42 @@ export function formatarCnpj(cnpj: string): string {
 }
 
 async function selecionarOpcaoPorTexto(page: Page, seletor: string, textoEsperado: string, campo: string): Promise<void> {
-  const select = page.locator(seletor);
-  if (await select.count() === 0) throw new CctUnavailableError(`Seletor do campo ${campo} nao encontrado no Mediador: ${seletor}`);
-
-  const opcoes = await select.locator('option').evaluateAll(options => options.map(option => ({ label: option.textContent?.trim() ?? '', value: (option as HTMLOptionElement).value })));
   const normalizar = (texto: string) => texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().trim();
   const esperado = normalizar(textoEsperado);
-  const opcao = opcoes.find(option => normalizar(option.label) === esperado)
-    ?? opcoes.find(option => normalizar(option.label).includes(esperado));
-  if (!opcao) throw new CctUnavailableError(`Opcao ${textoEsperado} nao encontrada no campo ${campo}`);
-  await select.selectOption(opcao.value);
+  const candidatos: ReturnType<Page['locator']>[] = [];
+  const selectConfigurado = page.locator(seletor);
+  if (await selectConfigurado.count() > 0) candidatos.push(selectConfigurado.first());
+  const selects = page.locator('select');
+  for (let indice = 0; indice < await selects.count(); indice += 1) {
+    candidatos.push(selects.nth(indice));
+  }
+
+  const opcoesPorSelect: Array<{
+    select: ReturnType<Page['locator']>;
+    opcoes: Array<{ label: string; value: string }>;
+  }> = [];
+  const rotulosDisponiveis = new Set<string>();
+  for (const select of candidatos) {
+    if (!await select.isVisible().catch(() => false)) continue;
+    const opcoes = await select.locator('option').evaluateAll(options => options.map(option => ({
+      label: option.textContent?.trim() ?? '',
+      value: (option as HTMLOptionElement).value
+    })));
+    opcoes.forEach(opcao => rotulosDisponiveis.add(opcao.label));
+    opcoesPorSelect.push({ select, opcoes });
+  }
+
+  for (const exato of [true, false]) {
+    for (const candidato of opcoesPorSelect) {
+      const opcao = candidato.opcoes.find(item => exato
+        ? normalizar(item.label) === esperado
+        : normalizar(item.label).includes(esperado));
+      if (!opcao) continue;
+      await candidato.select.selectOption(opcao.value);
+      return;
+    }
+  }
+  throw new CctUnavailableError(`Opcao ${textoEsperado} nao encontrada no campo ${campo}; seletor configurado: ${seletor}; opcoes disponiveis: ${[...rotulosDisponiveis].join(', ') || 'nenhuma'}`);
 }
 
 export function anoMaisRecenteDisponivel(textos: string[], anoLimite: number): number | undefined {
