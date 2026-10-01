@@ -95,6 +95,24 @@ async function clicarBotaoPesquisar(page: Page, botao: ReturnType<Page['locator'
   await botao.click();
 }
 
+async function fecharAlertaSemResultados(page: Page): Promise<void> {
+  const dialogos = page.locator('.ui-dialog');
+  for (let indice = 0; indice < await dialogos.count(); indice += 1) {
+    const dialogo = dialogos.nth(indice);
+    if (!await dialogo.isVisible().catch(() => false)) continue;
+    const texto = await dialogo.innerText().catch(() => '');
+    if (!detectarSemResultadosMediador(texto)) continue;
+
+    const botaoOk = dialogo.getByRole('button', { name: /^ok$/i });
+    if (await botaoOk.count() === 0) {
+      throw new CctUnavailableError(`Alerta sem resultados nao possui botao OK: ${texto.replace(/\s+/g, ' ')}`);
+    }
+    await botaoOk.click();
+    await page.locator('.ui-widget-overlay').waitFor({ state: 'hidden', timeout: 5_000 });
+    return;
+  }
+}
+
 export function anoMaisRecenteDisponivel(textos: string[], anoLimite: number): number | undefined {
   const anos = textos.flatMap(texto => texto.match(/\b(?:19|20)\d{2}\b/g)?.map(Number) ?? [])
     .filter(ano => ano <= anoLimite);
@@ -294,7 +312,10 @@ async function pesquisarResultadosMediador(
     ? await resultadoHandle.jsonValue() as 'resultados' | 'sem-resultados'
     : undefined;
 
-  if (estadoPesquisa === 'sem-resultados') return null;
+  if (estadoPesquisa === 'sem-resultados') {
+    await fecharAlertaSemResultados(page);
+    return null;
+  }
   if (!estadoPesquisa) {
     const titulo = await page.title().catch(() => '');
     const corpo = await page.locator('body').innerText().catch(() => '');

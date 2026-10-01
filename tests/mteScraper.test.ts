@@ -22,6 +22,7 @@ test('detectarDesafioAntiBot reconhece as telas bloqueadas do Mediador', () => {
 });
 
 test('detectarSemResultadosMediador reconhece respostas vazias com ou sem acentos', () => {
+  assert.equal(detectarSemResultadosMediador('Atenção Nenhum registro encontrado. OK'), true);
   assert.equal(detectarSemResultadosMediador('Nenhum instrumento coletivo encontrado'), true);
   assert.equal(detectarSemResultadosMediador('Não foram encontrados registros'), true);
   assert.equal(detectarSemResultadosMediador('Resultados da pesquisa'), false);
