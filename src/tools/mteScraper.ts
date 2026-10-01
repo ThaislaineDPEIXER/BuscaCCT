@@ -77,6 +77,24 @@ async function selecionarOpcaoPorTexto(page: Page, seletor: string, textoEsperad
   throw new CctUnavailableError(`Opcao ${textoEsperado} nao encontrada no campo ${campo}; seletor configurado: ${seletor}; opcoes disponiveis: ${[...rotulosDisponiveis].join(', ') || 'nenhuma'}`);
 }
 
+async function clicarBotaoPesquisar(page: Page, botao: ReturnType<Page['locator']>): Promise<void> {
+  const overlay = page.locator('.ui-widget-overlay');
+  try {
+    await overlay.waitFor({ state: 'hidden', timeout: 5_000 });
+  } catch {
+    const dialogos = await page.locator('.ui-dialog').evaluateAll(elements => elements
+      .filter(element => element.getClientRects().length > 0)
+      .map(element => ({
+        titulo: element.querySelector('.ui-dialog-title')?.textContent?.trim() ?? '',
+        texto: (element as HTMLElement).innerText.trim(),
+        botoes: Array.from(element.querySelectorAll('button, input[type="button"], input[type="submit"]'))
+          .map(button => (button.textContent || (button as HTMLInputElement).value).trim())
+      })));
+    throw new CctUnavailableError(`Mediador manteve overlay bloqueando a pesquisa. Dialogos: ${JSON.stringify(dialogos)}`);
+  }
+  await botao.click();
+}
+
 export function anoMaisRecenteDisponivel(textos: string[], anoLimite: number): number | undefined {
   const anos = textos.flatMap(texto => texto.match(/\b(?:19|20)\d{2}\b/g)?.map(Number) ?? [])
     .filter(ano => ano <= anoLimite);
@@ -262,7 +280,7 @@ async function pesquisarResultadosMediador(
   priorizarPrimeiro: boolean
 ): Promise<{ link: ReturnType<Page['locator']>; anoVigencia: number } | null> {
   const navegacao = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10_000 }).catch(() => undefined);
-  await botaoPesquisar.click();
+  await clicarBotaoPesquisar(page, botaoPesquisar);
   await Promise.race([navegacao, wait(1_000)]);
   const seletorResultados = [env.mteResultSelector, 'table.tabelaResultados', '#tabelaResultados'].join(', ');
   const resultadoHandle = await page.waitForFunction(({ seletor, padraoSemResultados }) => {
