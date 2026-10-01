@@ -11,6 +11,7 @@ import { storePdf } from '../services/documentStorage';
 chromium.use(stealthPlugin());
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const PADRAO_SEM_RESULTADOS_MTE = /nenhum\s+(?:resultado|registro|instrumento|documento)|nao\s+foram\s+encontrad[oa]s|nao\s+ha\s+resultados|sem\s+resultados|consulta\s+nao\s+retornou\s+resultados/i;
 
 export class CctUnavailableError extends Error {}
 export class CctCaptchaRequiredError extends CctUnavailableError {}
@@ -106,6 +107,11 @@ export const MTE_ANTI_BOT_PATTERNS = [
 export function detectarDesafioAntiBot(titulo: string, corpo: string): boolean {
   const texto = `${titulo ?? ''}\n${corpo ?? ''}`.normalize('NFKC');
   return MTE_ANTI_BOT_PATTERNS.some(padrao => padrao.test(texto));
+}
+
+export function detectarSemResultadosMediador(texto: string): boolean {
+  const normalizado = texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+  return PADRAO_SEM_RESULTADOS_MTE.test(normalizado);
 }
 
 export async function buscarESalvarCCTComAno(cnpj: string, anoVigencia: number): Promise<ResultadoBuscaCct> {
@@ -258,10 +264,35 @@ async function pesquisarResultadosMediador(
   const navegacao = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10_000 }).catch(() => undefined);
   await botaoPesquisar.click();
   await Promise.race([navegacao, wait(1_000)]);
-  await page.waitForSelector([env.mteResultSelector, 'table.tabelaResultados', '#tabelaResultados'].join(', '), {
-    state: 'visible',
-    timeout: env.mteNavigationTimeoutMs
-  });
+  const seletorResultados = [env.mteResultSelector, 'table.tabelaResultados', '#tabelaResultados'].join(', ');
+  const resultadoHandle = await page.waitForFunction(({ seletor, padraoSemResultados }) => {
+    const tabela = document.querySelector(seletor);
+    if (tabela && (tabela as HTMLElement).getClientRects().length > 0) return 'resultados';
+    const texto = (document.body?.innerText ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase();
+    return new RegExp(padraoSemResultados, 'i').test(texto) ? 'sem-resultados' : false;
+  }, { seletor: seletorResultados, padraoSemResultados: PADRAO_SEM_RESULTADOS_MTE.source }, { timeout: env.mteNavigationTimeoutMs })
+    .catch(() => undefined);
+  const estadoPesquisa = resultadoHandle
+    ? await resultadoHandle.jsonValue() as 'resultados' | 'sem-resultados'
+    : undefined;
+
+  if (estadoPesquisa === 'sem-resultados') return null;
+  if (!estadoPesquisa) {
+    const titulo = await page.title().catch(() => '');
+    const corpo = await page.locator('body').innerText().catch(() => '');
+    if (detectarDesafioAntiBot(titulo, corpo)) {
+      throw new CctAccessBlockedError(`Mediador bloqueou a consulta após a pesquisa: ${titulo} ${corpo.substring(0, 300).replace(/\s+/g, ' ')}`);
+    }
+    if (await page.locator(env.mteCaptchaSelector).isVisible().catch(() => false)) {
+      throw new CctCaptchaRequiredError('Mediador exige CAPTCHA após a pesquisa');
+    }
+    const tabelas = await page.locator('table').evaluateAll(elements => elements.map(element => ({
+      id: element.id,
+      classe: element.className,
+      linhas: element.querySelectorAll('tbody tr').length
+    })));
+    throw new CctUnavailableError(`Mediador nao apresentou resultados apos a pesquisa. URL: ${page.url()}; titulo: ${titulo}; tabelas: ${JSON.stringify(tabelas)}; texto: ${corpo.substring(0, 500).replace(/\s+/g, ' ')}`);
+  }
 
   const linhas = page.locator('table#tabelaResultados tbody tr');
   const candidatas: Array<{ link: ReturnType<Page['locator']>; ano?: number; temAnoExplicito: boolean }> = [];

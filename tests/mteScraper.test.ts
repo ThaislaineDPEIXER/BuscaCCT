@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { anoMaisRecenteDisponivel, CctAccessBlockedError, CctCaptchaRequiredError, CctUnavailableError, detectarDesafioAntiBot, deveIgnorarPendenciaManual, formatarCnpj, temTextoCctUtilizavel } from '../src/tools/mteScraper';
+import { anoMaisRecenteDisponivel, CctAccessBlockedError, CctCaptchaRequiredError, CctUnavailableError, detectarDesafioAntiBot, detectarSemResultadosMediador, deveIgnorarPendenciaManual, formatarCnpj, temTextoCctUtilizavel } from '../src/tools/mteScraper';
 
 test('exceções do scraper devem manter a hierarquia correta', () => {
   const captcha = new CctCaptchaRequiredError('captchas');
@@ -19,6 +19,12 @@ test('detectarDesafioAntiBot reconhece as telas bloqueadas do Mediador', () => {
   assert.equal(detectarDesafioAntiBot('Just a moment', 'Checking your browser before accessing mediador.trabalho.gov.br'), true);
   assert.equal(detectarDesafioAntiBot('Mediador', 'Acesso bloqueado por desafio anti-bot'), true);
   assert.equal(detectarDesafioAntiBot('Consulta de CCT', 'Resultado da busca'), false);
+});
+
+test('detectarSemResultadosMediador reconhece respostas vazias com ou sem acentos', () => {
+  assert.equal(detectarSemResultadosMediador('Nenhum instrumento coletivo encontrado'), true);
+  assert.equal(detectarSemResultadosMediador('Não foram encontrados registros'), true);
+  assert.equal(detectarSemResultadosMediador('Resultados da pesquisa'), false);
 });
 
 test('pendência manual só bloqueia nova consulta sem retry explícito', () => {
