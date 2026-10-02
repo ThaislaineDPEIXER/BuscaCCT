@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { anoMaisRecenteDisponivel, CctAccessBlockedError, CctCaptchaRequiredError, CctNoResultsError, CctUnavailableError, detectarDesafioAntiBot, detectarSemResultadosMediador, deveIgnorarPendenciaManual, deveInvalidarExtracaoCct, formatarCnpj, temTextoCctUtilizavel } from '../src/tools/mteScraper';
+import { anoMaisRecenteDisponivel, corpoTemAssinaturaPdf, CctAccessBlockedError, CctCaptchaRequiredError, CctNoResultsError, CctUnavailableError, detectarDesafioAntiBot, detectarSemResultadosMediador, deveIgnorarPendenciaManual, deveInvalidarExtracaoCct, formatarCnpj, temTextoCctUtilizavel } from '../src/tools/mteScraper';
 
 test('exceções do scraper devem manter a hierarquia correta', () => {
   const captcha = new CctCaptchaRequiredError('captchas');
@@ -47,6 +47,12 @@ test('extração é invalidada quando o texto da CCT muda ou ainda não foi capt
   assert.equal(deveInvalidarExtracaoCct(undefined, 'Texto novo'), true);
   assert.equal(deveInvalidarExtracaoCct('Texto antigo', 'Texto novo'), true);
   assert.equal(deveInvalidarExtracaoCct('Mesmo texto', 'Mesmo texto'), false);
+});
+
+test('detectar PDF pela assinatura binária mesmo quando o servidor altera o MIME', () => {
+  assert.equal(corpoTemAssinaturaPdf(Buffer.from('%PDF-1.7\nconteudo')), true);
+  assert.equal(corpoTemAssinaturaPdf(Buffer.from('<html>nao e PDF</html>')), false);
+  assert.equal(corpoTemAssinaturaPdf(Buffer.alloc(0)), false);
 });
 
 test('fallback escolhe o ano mais recente sem ultrapassar o ano anterior', () => {

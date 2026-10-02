@@ -31,6 +31,10 @@ export function deveInvalidarExtracaoCct(textoAnterior: string | null | undefine
   return !textoAnterior || textoAnterior !== textoAtual;
 }
 
+export function corpoTemAssinaturaPdf(conteudo: Buffer): boolean {
+  return conteudo.subarray(0, 1_024).includes(Buffer.from('%PDF-'));
+}
+
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function normalizarCnpj(cnpj: string): string {
@@ -336,12 +340,35 @@ async function pesquisarResultadosMediador(
     if (await page.locator(env.mteCaptchaSelector).isVisible().catch(() => false)) {
       throw new CctCaptchaRequiredError('Mediador exige CAPTCHA após a pesquisa');
     }
-    const tabelas = await page.locator('table').evaluateAll(elements => elements.map(element => ({
-      id: element.id,
-      classe: element.className,
-      linhas: element.querySelectorAll('tbody tr').length
-    })));
-    throw new CctUnavailableError(`Mediador nao apresentou resultados apos a pesquisa. URL: ${page.url()}; titulo: ${titulo}; tabelas: ${JSON.stringify(tabelas)}; texto: ${corpo.substring(0, 500).replace(/\s+/g, ' ')}`);
+    const [tabelas, controles, dialogos] = await Promise.all([
+      page.locator('table').evaluateAll(elements => elements.map(element => ({
+        id: element.id,
+        classe: element.className,
+        linhas: Array.from(element.querySelectorAll('tbody tr')).slice(0, 3).map(linha => ({
+          texto: (linha as HTMLElement).innerText.trim().replace(/\s+/g, ' ').substring(0, 180),
+          links: Array.from(linha.querySelectorAll('a')).map(link => ({
+            texto: link.textContent?.trim() ?? '',
+            href: (link as HTMLAnchorElement).href
+          })).slice(0, 3)
+        }))
+      }))),
+      page.locator('input, select').evaluateAll(elements => elements.map(element => {
+        const input = element as HTMLInputElement;
+        const select = element as HTMLSelectElement;
+        return {
+          tag: element.tagName,
+          name: element.getAttribute('name'),
+          id: element.id,
+          type: input.type ?? '',
+          valueLength: input.value?.length ?? 0,
+          selectedText: select.selectedOptions?.[0]?.textContent?.trim() ?? ''
+        };
+      })),
+      page.locator('.ui-dialog').evaluateAll(elements => elements
+        .filter(element => element.getClientRects().length > 0)
+        .map(element => (element as HTMLElement).innerText.trim().replace(/\s+/g, ' ').substring(0, 300)))
+    ]);
+    throw new CctUnavailableError(`Mediador nao apresentou resultados apos a pesquisa. URL: ${page.url()}; titulo: ${titulo}; tabelas: ${JSON.stringify(tabelas)}; controles: ${JSON.stringify(controles)}; dialogos: ${JSON.stringify(dialogos)}; texto: ${corpo.substring(0, 800).replace(/\s+/g, ' ')}`);
   }
 
   const tabelaResultados = page.locator(seletorResultados).filter({ visible: true }).first();
@@ -441,15 +468,41 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
   await documentPage.waitForLoadState('domcontentloaded');
   let texto = (await documentPage.locator('body').innerText()).trim();
   let pdfBuffer: Buffer | undefined;
-  const fonteUrl = documentPage.url();
+  let fonteUrl = documentPage.url();
   if (texto.length < 300) {
-    const pdfUrl = documentPage.url();
-    const pdf = await context.request.get(pdfUrl, { timeout: env.mteNavigationTimeoutMs });
-    const contentType = (pdf.headers()['content-type'] ?? '').toLowerCase();
-    if (!pdf.ok() || !contentType.includes('application/pdf')) {
-      throw new CctUnavailableError('Mediador retornou texto insuficiente e nao disponibilizou um PDF');
+    const resposta = await context.request.get(fonteUrl, { timeout: env.mteNavigationTimeoutMs });
+    const contentType = resposta.headers()['content-type'] ?? 'desconhecido';
+    const conteudo = await resposta.body();
+    if (resposta.ok() && corpoTemAssinaturaPdf(conteudo)) {
+      pdfBuffer = conteudo;
+    } else {
+      const origem = new URL(fonteUrl).origin;
+      const links = await documentPage.locator('a[href]').evaluateAll(anchors => anchors.map(anchor => ({
+        href: (anchor as HTMLAnchorElement).href,
+        texto: anchor.textContent?.trim() ?? ''
+      })));
+      const candidatos = links.filter(link => {
+        try {
+          return new URL(link.href).origin === origem
+            && /pdf|download|baixar|arquivo|documento|visualizar|instrumento/i.test(`${link.href} ${link.texto}`);
+        } catch {
+          return false;
+        }
+      }).slice(0, 12);
+
+      for (const candidato of candidatos) {
+        const respostaCandidata = await context.request.get(candidato.href, { timeout: env.mteNavigationTimeoutMs });
+        const conteudoCandidato = await respostaCandidata.body();
+        if (!respostaCandidata.ok() || !corpoTemAssinaturaPdf(conteudoCandidato)) continue;
+        pdfBuffer = conteudoCandidato;
+        fonteUrl = candidato.href;
+        break;
+      }
+
+      if (!pdfBuffer) {
+        throw new CctUnavailableError(`Mediador retornou texto insuficiente e nenhum PDF válido. URL: ${fonteUrl}; HTTP: ${resposta.status()}; content-type: ${contentType}; links candidatos: ${JSON.stringify(candidatos)}`);
+      }
     }
-    pdfBuffer = await pdf.body();
     texto = await extrairTextoPdf(pdfBuffer);
   }
   if (!texto) throw new CctUnavailableError('Mediador retornou uma CCT vazia');
