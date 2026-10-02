@@ -311,7 +311,7 @@ async function pesquisarResultadosMediador(
   const navegacao = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10_000 }).catch(() => undefined);
   await clicarBotaoPesquisar(page, botaoPesquisar);
   await Promise.race([navegacao, wait(1_000)]);
-  const seletorResultados = [env.mteResultSelector, 'table.tabelaResultados', '#tabelaResultados'].join(', ');
+  const seletorResultados = [env.mteResultSelector, 'table.tabelaResultados', '#tabelaResultados', 'table.Dados.Tb01'].join(', ');
   const resultadoHandle = await page.waitForFunction(({ seletor, padraoSemResultados }) => {
     const tabelas = Array.from(document.querySelectorAll(seletor));
     if (tabelas.some(tabela => (tabela as HTMLElement).getClientRects().length > 0)) return 'resultados';
