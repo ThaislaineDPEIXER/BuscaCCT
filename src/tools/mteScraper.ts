@@ -376,7 +376,14 @@ async function pesquisarResultadosMediador(
   const candidatas: Array<{ link: ReturnType<Page['locator']>; ano?: number; temAnoExplicito: boolean }> = [];
   for (let indice = 0; indice < await linhas.count(); indice += 1) {
     const linha = linhas.nth(indice);
-    const link = linha.locator('a').first();
+    const visualizar = linha.locator('a').filter({ hasText: /visualizar\s+instrumento\s+coletivo/i }).first();
+    const download = linha.locator('a').filter({ hasText: /download/i }).first();
+    const links = linha.locator('a');
+    const link = await visualizar.count() > 0
+      ? visualizar
+      : await download.count() > 0
+        ? download
+        : links.first();
     if (await link.count() === 0) continue;
     const texto = await linha.innerText();
     candidatas.push({
