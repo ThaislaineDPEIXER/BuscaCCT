@@ -469,9 +469,14 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
   }
   if (!resultadoSelecionado) throw new CctNoResultsError(`Mediador nao encontrou CCT vigente nem nao vigente de ${anoVigencia - 1}`);
 
+  const urlAntesDaVisualizacao = page.url();
   const popup = context.waitForEvent('page', { timeout: 10_000 }).catch(() => null);
   await resultadoSelecionado.link.click();
-  const documentPage = (await popup) ?? page;
+  const paginaVisualizacao = await popup;
+  if (!paginaVisualizacao && page.url() === urlAntesDaVisualizacao) {
+    throw new CctUnavailableError('O link Visualizar Instrumento Coletivo nao abriu uma nova aba nem navegou para o documento.');
+  }
+  const documentPage = paginaVisualizacao ?? page;
   await documentPage.waitForLoadState('domcontentloaded');
   let texto = (await documentPage.locator('body').innerText()).trim();
   const fonteUrl = documentPage.url();
