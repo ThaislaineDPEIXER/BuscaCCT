@@ -13,6 +13,7 @@ Este diretório reúne os principais artefatos prontos para apoiar a fase de Go-
 7. [Documento executivo final — Go-Live](./08-go-live-documento-executivo.md)
 8. [Kit final de Go-Live](./10-kit-go-live-final.md)
 9. [Dossiê final de implantação](./11-dossie-implantacao-final.md)
+10. [Release note técnico de Go-Live](./12-release-note-go-live.md)
 
 ## Ordem recomendada de uso
 
