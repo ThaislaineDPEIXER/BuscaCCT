@@ -54,7 +54,7 @@ export const env = {
   anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-20250514',
   anthropicVisionModel: process.env.ANTHROPIC_VISION_MODEL ?? 'claude-3-5-sonnet-20241022',
   geminiApiKey,
-  geminiModel: process.env.GEMINI_MODEL ?? 'gemini-1.5-flash',
+  geminiModel: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash',
   ibgeBaseUrl: process.env.IBGE_BASE_URL ?? 'https://servicodados.ibge.gov.br/api/v3/agregados',
   ibgeIpcaAgregado: process.env.IBGE_IPCA_AGREGADO ?? '7060',
   ibgeInpcAgregado: process.env.IBGE_INPC_AGREGADO ?? '7061',

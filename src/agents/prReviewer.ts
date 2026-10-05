@@ -54,7 +54,7 @@ async function loadPullRequestDiff(token: string, owner: string, repo: string, p
 async function analyzeDiff(diffText: string): Promise<string> {
   const geminiApiKey = requireEnv('GEMINI_API_KEY');
   const client = new GoogleGenerativeAI(geminiApiKey);
-  const model = client.getGenerativeModel({ model: 'gemini-1.5-flash' });
+  const model = client.getGenerativeModel({ model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash' });
 
   const prompt = [
     'Você é um Arquiteto de Software revisando um Pull Request.',
