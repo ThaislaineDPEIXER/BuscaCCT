@@ -12,6 +12,7 @@ chromium.use(stealthPlugin());
 
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const PADRAO_SEM_RESULTADOS_MTE = /nenhum\s+(?:resultado|registro|instrumento|documento)|nao\s+foram\s+encontrad[oa]s|nao\s+ha\s+resultados|sem\s+resultados|consulta\s+nao\s+retornou\s+resultados/i;
+const PADRAO_TIPO_INSTRUMENTO_EXPLICITO = /convencao\s+coletiva|acordo\s+coletivo|termo\s+aditivo|sentenca\s+normativa/i;
 
 export class CctUnavailableError extends Error {}
 export class CctNoResultsError extends CctUnavailableError {}
@@ -37,6 +38,10 @@ export function corpoTemAssinaturaPdf(conteudo: Buffer): boolean {
 
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
+function normalizarTextoMte(texto: string): string {
+  return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().trim();
+}
+
 function normalizarCnpj(cnpj: string): string {
   const normalizado = cnpj.replace(/\D/g, '');
   if (normalizado.length !== 14) throw new Error('CNPJ deve conter 14 digitos');
@@ -48,8 +53,7 @@ export function formatarCnpj(cnpj: string): string {
 }
 
 async function selecionarOpcaoPorTexto(page: Page, seletor: string, textoEsperado: string, campo: string): Promise<void> {
-  const normalizar = (texto: string) => texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase().trim();
-  const esperado = normalizar(textoEsperado);
+  const esperado = normalizarTextoMte(textoEsperado);
   const candidatos: ReturnType<Page['locator']>[] = [];
   const selectConfigurado = page.locator(seletor);
   if (await selectConfigurado.count() > 0) candidatos.push(selectConfigurado.first());
@@ -76,14 +80,26 @@ async function selecionarOpcaoPorTexto(page: Page, seletor: string, textoEsperad
   for (const exato of [true, false]) {
     for (const candidato of opcoesPorSelect) {
       const opcao = candidato.opcoes.find(item => exato
-        ? normalizar(item.label) === esperado
-        : normalizar(item.label).includes(esperado));
+        ? normalizarTextoMte(item.label) === esperado
+        : normalizarTextoMte(item.label).includes(esperado));
       if (!opcao) continue;
       await candidato.select.selectOption(opcao.value);
+      const selecionado = await candidato.select.locator('option:checked').first().textContent().catch(() => opcao.label);
+      if (!normalizarTextoMte(selecionado ?? '').includes(esperado)) {
+        throw new CctUnavailableError(`Campo ${campo} permaneceu com valor inesperado apos selecao. Esperado: ${textoEsperado}; atual: ${selecionado ?? 'vazio'}`);
+      }
       return;
     }
   }
   throw new CctUnavailableError(`Opcao ${textoEsperado} nao encontrada no campo ${campo}; seletor configurado: ${seletor}; opcoes disponiveis: ${[...rotulosDisponiveis].join(', ') || 'nenhuma'}`);
+}
+
+export function linhaCorrespondeTipoInstrumento(textoLinha: string, tipoEsperado: string): boolean {
+  return normalizarTextoMte(textoLinha).includes(normalizarTextoMte(tipoEsperado));
+}
+
+function linhaTemTipoInstrumentoExplicito(textoLinha: string): boolean {
+  return PADRAO_TIPO_INSTRUMENTO_EXPLICITO.test(normalizarTextoMte(textoLinha));
 }
 
 async function clicarBotaoPesquisar(page: Page, botao: ReturnType<Page['locator']>): Promise<void> {
@@ -310,7 +326,8 @@ async function pesquisarResultadosMediador(
   botaoPesquisar: ReturnType<Page['locator']>,
   anoLimite: number,
   anoFallback: number,
-  priorizarPrimeiro: boolean
+  priorizarPrimeiro: boolean,
+  tipoEsperado: string
 ): Promise<{ link: ReturnType<Page['locator']>; anoVigencia: number } | null> {
   const navegacao = page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 10_000 }).catch(() => undefined);
   await clicarBotaoPesquisar(page, botaoPesquisar);
@@ -373,7 +390,7 @@ async function pesquisarResultadosMediador(
 
   const tabelaResultados = page.locator(seletorResultados).filter({ visible: true }).first();
   const linhas = tabelaResultados.locator('tbody tr');
-  const candidatas: Array<{ link: ReturnType<Page['locator']>; ano?: number; temAnoExplicito: boolean }> = [];
+  const candidatas: Array<{ link: ReturnType<Page['locator']>; ano?: number; temAnoExplicito: boolean; texto: string; tipoCompativel: boolean; temTipoExplicito: boolean }> = [];
   for (let indice = 0; indice < await linhas.count(); indice += 1) {
     const linha = linhas.nth(indice);
     const visualizar = linha.locator('a').filter({ hasText: /visualizar\s+instrumento\s+coletivo/i }).first();
@@ -389,7 +406,10 @@ async function pesquisarResultadosMediador(
     candidatas.push({
       link,
       ano: anoMaisRecenteDisponivel([texto], anoLimite),
-      temAnoExplicito: /\b(?:19|20)\d{2}\b/.test(texto)
+      temAnoExplicito: /\b(?:19|20)\d{2}\b/.test(texto),
+      texto,
+      tipoCompativel: linhaCorrespondeTipoInstrumento(texto, tipoEsperado),
+      temTipoExplicito: linhaTemTipoInstrumentoExplicito(texto)
     });
   }
 
@@ -404,11 +424,18 @@ async function pesquisarResultadosMediador(
     }
   }
 
+  const candidatasComTipoExplicito = candidatas.filter(candidata => candidata.temTipoExplicito);
+  const candidatasCompativeis = candidatas.filter(candidata => candidata.tipoCompativel);
+  if (candidatasComTipoExplicito.length > 0 && candidatasCompativeis.length === 0) {
+    throw new CctUnavailableError(`Mediador retornou resultados com tipo divergente de ${tipoEsperado}. Linhas: ${JSON.stringify(candidatasComTipoExplicito.map(candidata => candidata.texto.replace(/\s+/g, ' ').substring(0, 220)))}`);
+  }
+
+  const baseCandidatas = candidatasCompativeis.length > 0 ? candidatasCompativeis : candidatas;
   const escolhida = priorizarPrimeiro
-    ? candidatas[0]
-    : candidatas.filter(candidata => candidata.ano !== undefined)
+    ? baseCandidatas[0]
+    : baseCandidatas.filter(candidata => candidata.ano !== undefined)
       .sort((a, b) => (b.ano ?? 0) - (a.ano ?? 0))[0]
-      ?? (candidatas.every(candidata => !candidata.temAnoExplicito) ? candidatas[0] : undefined);
+      ?? (baseCandidatas.every(candidata => !candidata.temAnoExplicito) ? baseCandidatas[0] : undefined);
   if (!escolhida) return null;
   return { link: escolhida.link, anoVigencia: escolhida.ano ?? anoFallback };
 }
@@ -460,12 +487,14 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
     ? env.mteValidityLabel
     : 'Vigentes';
   await selecionarOpcaoPorTexto(page, env.mteValiditySelector, rotuloVigentes, 'vigencia');
-  let resultadoSelecionado = await pesquisarResultadosMediador(page, botaoPesquisar, anoVigencia, anoVigencia, true);
+  console.log(`[MTE-DIAGNOSTICO] Filtros aplicados: CNPJ=${formatarCnpj(cnpj)}, Tipo="${env.mteTypeLabel}", Vigência="${rotuloVigentes}"`);
+  let resultadoSelecionado = await pesquisarResultadosMediador(page, botaoPesquisar, anoVigencia, anoVigencia, true, env.mteTypeLabel);
 
   if (!resultadoSelecionado) {
     const anoAnterior = anoVigencia - 1;
     await selecionarOpcaoPorTexto(page, env.mteValiditySelector, 'Nao Vigentes', 'vigencia');
-    resultadoSelecionado = await pesquisarResultadosMediador(page, botaoPesquisar, anoAnterior, anoAnterior, false);
+    console.log(`[MTE-DIAGNOSTICO] Filtros aplicados: CNPJ=${formatarCnpj(cnpj)}, Tipo="${env.mteTypeLabel}", Vigência="Nao Vigentes"`);
+    resultadoSelecionado = await pesquisarResultadosMediador(page, botaoPesquisar, anoAnterior, anoAnterior, false, env.mteTypeLabel);
   }
   if (!resultadoSelecionado) throw new CctNoResultsError(`Mediador nao encontrou CCT vigente nem nao vigente de ${anoVigencia - 1}`);
 

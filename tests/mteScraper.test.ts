@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { anoMaisRecenteDisponivel, corpoTemAssinaturaPdf, CctAccessBlockedError, CctCaptchaRequiredError, CctNoResultsError, CctUnavailableError, detectarDesafioAntiBot, detectarSemResultadosMediador, deveIgnorarPendenciaManual, deveInvalidarExtracaoCct, formatarCnpj, temTextoCctUtilizavel } from '../src/tools/mteScraper';
+import { anoMaisRecenteDisponivel, corpoTemAssinaturaPdf, CctAccessBlockedError, CctCaptchaRequiredError, CctNoResultsError, CctUnavailableError, detectarDesafioAntiBot, detectarSemResultadosMediador, deveIgnorarPendenciaManual, deveInvalidarExtracaoCct, formatarCnpj, linhaCorrespondeTipoInstrumento, temTextoCctUtilizavel } from '../src/tools/mteScraper';
 
 test('exceções do scraper devem manter a hierarquia correta', () => {
   const captcha = new CctCaptchaRequiredError('captchas');
@@ -63,4 +63,9 @@ test('fallback escolhe o ano mais recente sem ultrapassar o ano anterior', () =>
 test('CNPJ é formatado conforme a máscara do formulário do Mediador', () => {
   assert.equal(formatarCnpj('79831442000130'), '79.831.442/0001-30');
   assert.equal(formatarCnpj('79.831.442/0001-30'), '79.831.442/0001-30');
+});
+
+test('resultado do Mediador deve distinguir Convenção Coletiva de Acordo Coletivo', () => {
+  assert.equal(linhaCorrespondeTipoInstrumento('Tipo do Instrumento Coletivo: Convenção Coletiva', 'Convenção Coletiva'), true);
+  assert.equal(linhaCorrespondeTipoInstrumento('Tipo do Instrumento Coletivo: Acordo Coletivo', 'Convenção Coletiva'), false);
 });
