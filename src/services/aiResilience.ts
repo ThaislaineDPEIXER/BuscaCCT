@@ -10,6 +10,50 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
 }
 
+function getErrorDetails(error: unknown): { status?: number; message: string; errorDetails: Array<Record<string, unknown>> } {
+  if (!error || typeof error !== 'object') {
+    return { message: String(error ?? ''), errorDetails: [] };
+  }
+
+  const candidate = error as {
+    status?: unknown;
+    statusCode?: unknown;
+    message?: unknown;
+    errorDetails?: unknown;
+  };
+  const status = typeof candidate.status === 'number'
+    ? candidate.status
+    : typeof candidate.statusCode === 'number'
+      ? candidate.statusCode
+      : undefined;
+
+  return {
+    status,
+    message: typeof candidate.message === 'string' ? candidate.message : String(candidate.message ?? ''),
+    errorDetails: Array.isArray(candidate.errorDetails)
+      ? candidate.errorDetails.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object')
+      : []
+  };
+}
+
+function isQuotaExhaustedAiError(error: unknown): boolean {
+  const { status, message, errorDetails } = getErrorDetails(error);
+  if (status !== 429) return false;
+
+  if (/quota|free_tier|rate limit|billing details|retry in/i.test(message)) {
+    return true;
+  }
+
+  return errorDetails.some(detail => {
+    const type = String(detail['@type'] ?? '');
+    return type.includes('QuotaFailure') || type.includes('RetryInfo');
+  });
+}
+
+function shouldRetryAiError(error: unknown): boolean {
+  return isTransientAiError(error) && !isQuotaExhaustedAiError(error);
+}
+
 export function isTransientAiError(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false;
 
@@ -36,7 +80,7 @@ async function runWithRetries<T>(label: string, worker: () => Promise<T>, delays
       return await worker();
     } catch (error) {
       lastError = error;
-      const retryable = isTransientAiError(error);
+      const retryable = shouldRetryAiError(error);
       const delay = delaysMs[attempt];
       if (!retryable || delay === undefined) break;
       console.warn(`[AI] ${label} falhou na tentativa ${attempt + 1}; nova tentativa em ${Math.round(delay / 1_000)}s. Motivo: ${errorMessage(error)}`);
@@ -67,7 +111,14 @@ export async function runWithAiProviderFallback<T>(input: {
   try {
     return await runWithRetries(`${operation}/${provider}`, primary, delaysMs);
   } catch (error) {
-    if (!fallback || !isTransientAiError(error)) throw error;
+    if (!isTransientAiError(error)) throw error;
+
+    if (!fallback) {
+      throw new Error(
+        `[AI] ${operation} falhou no provedor ${provider} e o failover para ${fallbackProvider} não está configurado. Configure a chave do provedor secundário para ativar o fallback automático.`,
+        { cause: error }
+      );
+    }
 
     console.warn(`[AI] ${operation} esgotou retries no ${provider}; alternando automaticamente para ${fallbackProvider}. Motivo: ${errorMessage(error)}`);
     return runWithRetries(`${operation}/${fallbackProvider}`, fallback, delaysMs);

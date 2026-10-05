@@ -90,3 +90,46 @@ test('runWithAiProviderFallback usa o secundário quando o primário está indis
 
   assert.equal(resultado, 'ok-anthropic');
 });
+
+test('runWithAiProviderFallback alterna sem retries inúteis quando o Gemini estoura quota diária', async () => {
+  const chamadas: string[] = [];
+
+  const resultado = await runWithAiProviderFallback({
+    provider: 'gemini',
+    operation: 'extracao-cct',
+    delaysMs: [0, 0],
+    handlers: {
+      gemini: async () => {
+        chamadas.push('gemini');
+        throw {
+          status: 429,
+          message: 'Quota exceeded for metric generate_content_free_tier_requests. Please retry in 7h.',
+          errorDetails: [{ '@type': 'type.googleapis.com/google.rpc.QuotaFailure' }]
+        };
+      },
+      anthropic: async () => {
+        chamadas.push('anthropic');
+        return 'ok-anthropic';
+      }
+    }
+  });
+
+  assert.equal(resultado, 'ok-anthropic');
+  assert.deepEqual(chamadas, ['gemini', 'anthropic']);
+});
+
+test('runWithAiProviderFallback explica quando erro transitório ocorre sem fallback configurado', async () => {
+  await assert.rejects(
+    () => runWithAiProviderFallback({
+      provider: 'gemini',
+      operation: 'extracao-cct',
+      delaysMs: [0],
+      handlers: {
+        gemini: async () => {
+          throw { status: 503, message: 'overloaded' };
+        }
+      }
+    }),
+    /failover para anthropic não está configurado/
+  );
+});
