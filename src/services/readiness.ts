@@ -14,6 +14,8 @@ export type ReadinessResult = {
   postgres: HealthStatus;
   ai: HealthStatus;
   aiProvider: AiProvider;
+  aiFallbackProvider: AiProvider;
+  aiFallbackConfigured: boolean;
   anthropic?: HealthStatus;
   gemini?: HealthStatus;
   erro?: string;
@@ -86,6 +88,8 @@ export async function verificarReadiness(): Promise<ReadinessResult> {
     postgres,
     ai: ia.ai,
     aiProvider,
+    aiFallbackProvider: env.aiFallbackProvider,
+    aiFallbackConfigured: env.aiFallbackConfigured,
     ...(ia.anthropic ? { anthropic: ia.anthropic } : {}),
     ...(ia.gemini ? { gemini: ia.gemini } : {}),
     ...(erro ? { erro } : {})

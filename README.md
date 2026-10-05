@@ -1,25 +1,31 @@
-# Radar Sindical
+# Radar CCT
 
-Microserviço backend em Node.js + TypeScript para monitoramento, extração e alertas de Convenções Coletivas de Trabalho (CCTs). O projeto foi desenhado para operar em duas camadas separadas:
+Backend em Node.js + TypeScript para captura, extração e monitoramento de Convenções Coletivas de Trabalho (CCTs).
+O projeto opera em duas frentes complementares:
 
-- API Express para consulta e entrega de parâmetros ao portal
-- worker em cron para varredura automatizada do MTE e processamento em background
+- API Express para consulta, importação e exposição dos dados ao portal.
+- worker assíncrono para sincronização de cadastros, coleta no MTE, fallback em site oficial e extração com IA.
 
-## Visão geral
+## Estado atual
 
-O Radar Sindical automatiza a busca por convenções coletivas, captura conteúdo oficial, processa as informações com IA e entrega dados estruturados para o Departamento Pessoal e para o portal. O sistema foi pensado para funcionar em ambiente de homologação e produção, com configuração separada por variáveis de ambiente.
+O workspace já reflete o go-live técnico descrito para o Radar CCT:
+
+- scraping do Mediador com `playwright-extra` + `puppeteer-extra-plugin-stealth` em `src/tools/mteScraper.ts`;
+- suporte a `MTE_PROXY_URL` para proxy residencial brasileiro;
+- fallback automático para o site oficial do sindicato quando o MTE bloqueia, exige CAPTCHA ou não entrega resultado útil;
+- persistência de PDFs, evidências e parâmetros extraídos no PostgreSQL;
+- suíte automatizada verde com `npm test`.
 
 ## Stack principal
 
-- Node.js + TypeScript
-- ts-node-dev para desenvolvimento
-- Prisma ORM
-- PostgreSQL para desenvolvimento e produção
-- Express.js + CORS + dotenv
-- node-cron
-- axios
-- @anthropic-ai/sdk
-- playwright
+- Node.js 22+
+- TypeScript 5.9
+- Express 5
+- Prisma 6.19
+- PostgreSQL
+- Playwright + stealth plugin
+- Gemini + Anthropic com failover automático entre provedores
+- Google Drive + Google Sheets para operação em produção
 
 ## Estrutura principal
 
@@ -28,211 +34,181 @@ O Radar Sindical automatiza a busca por convenções coletivas, captura conteúd
 /prisma/seed.ts
 /src/server.ts
 /src/jobs/dailyUpdate.ts
+/src/jobs/runDailyUpdate.ts
+/src/routes/importacaoRoutes.ts
 /src/routes/moduloDpRoutes.ts
+/src/services/claudeAgent.ts
 /src/services/cctOcr.ts
+/src/services/operationalAlert.ts
+/src/services/readiness.ts
 /src/tools/mteScraper.ts
-/src/utils/operationalAlert.ts
-/Dockerfile
-/docker-compose.yml
+/tests/*.test.ts
+/.github/workflows/agent-worker.yml
 /.env.example
+/docker-compose.yml
 ```
 
-## Responsabilidades do sistema
+## Fluxos principais
 
-### 1. API Express
-A API expõe endpoints para consulta de parâmetros da CCT, importação de clientes, dashboard operacional, monitoramento de sindicatos e stream de alertas em tempo real.
+### API
 
-Endpoints principais:
+Endpoints mais relevantes:
 
-- `POST /api/importacao/clientes`: importa CSV de clientes, valida conteúdo textual, calcula SHA-256 e registra lote e linhas inválidas.
-- `POST /api/importacao/clientes/xlsx`: recebe uma planilha XLSX binária, valida a assinatura `PK\\x03\\x04`, calcula SHA-256 e usa a primeira aba como origem dos clientes.
+- `POST /api/importacao/clientes`: importa CSV de clientes com idempotência por hash.
+- `POST /api/importacao/clientes/xlsx`: importa planilha Excel validando a assinatura do arquivo.
 - `GET /api/importacao/lotes/:id`: consulta o resultado detalhado de um lote.
-- `GET /api/modulo-dp/dashboard/resumo`: retorna o resumo operacional do DP.
-- `GET /api/modulo-dp/dashboard/impactos`: lista impactos de folha recentes.
-- `GET /api/radar/sindicatos/:id`: consulta o estado e o último scan de um sindicato.
-- `GET /api/radar/sindicatos/:id/fallback`: informa o estado da descoberta por site.
-- `POST /api/radar/sindicatos/:id/fallback/cct`: captura PDF de CCT/ACT no site oficial e preserva a evidência.
-- `GET /api/modulo-dp/alertas/stream`: abre o stream SSE de alertas.
-- `GET /health`: liveness público para reinício do processo.
-- `GET /readiness`: verifica PostgreSQL e autenticação da API Anthropic antes de aceitar tráfego.
+- `GET /api/modulo-dp/dashboard/resumo`: entrega resumo operacional do DP.
+- `GET /api/modulo-dp/dashboard/impactos`: lista impactos recentes de folha.
+- `GET /api/radar/sindicatos/:id`: devolve estado atual do monitoramento do sindicato.
+- `GET /api/radar/sindicatos/:id/fallback`: informa o estado do fallback por site.
+- `POST /api/radar/sindicatos/:id/fallback/cct`: força captura de CCT via site oficial.
+- `GET /api/modulo-dp/alertas/stream`: abre SSE de alertas.
+- `GET /health`: liveness.
+- `GET /readiness`: readiness com PostgreSQL, provedor principal e estado do failover de IA.
 
-As importações são idempotentes por hash do arquivo: reenviar o mesmo conteúdo retorna o lote original sem criar novas linhas. A persistência do lote, clientes e linhas ocorre em uma transação serializável; falhas durante o processamento fazem rollback da carga.
+### Worker
 
-PDFs capturados pelo MTE recebem hash SHA-256 e têm sua localização registrada em `ConvencaoColetiva` e `EvidenciaCct`. Em desenvolvimento, o arquivo fica temporariamente em `DOCUMENT_STORAGE_PATH`. No worker de produção, `DOCUMENT_STORAGE_DRIVER=workspace` envia o PDF ao Google Drive depois da persistência da CCT e registra no Google Sheets a data, sindicato, resumo e link de compartilhamento.
+O worker executa, em ordem:
 
-Configure `GOOGLE_CLIENT_EMAIL`, `GOOGLE_PRIVATE_KEY`, `GOOGLE_DRIVE_FOLDER_ID` e `GOOGLE_SHEET_ID` como segredos do GitHub. Compartilhe a pasta do Drive e a planilha com o e-mail da service account, com permissão de edição. O worker publica links de leitura para os PDFs; confirme que essa política atende às regras de acesso da organização antes de ativá-lo.
+- importação da pasta de entrada do Google Drive;
+- sincronização da planilha administrativa;
+- sincronização da matriz de enquadramento;
+- processamento de PDFs manuais pendentes;
+- fila MTE com lock distribuído por CNPJ;
+- extração estruturada com IA e publicação no workspace.
 
-Para importar cadastros, configure `GOOGLE_DRIVE_INBOX_FOLDER_ID` com o ID da pasta `Radar – Entrada`. O worker lê os documentos diretamente nessa pasta e na subpasta `Cadastros de Sindicatos`. PDFs/imagens são extraídos por IA; arquivos `.csv`, `.xls` ou `.xlsx` são lidos como cadastros sindicais, sem IA. O CSV do relatório ERP deve conter blocos com os rótulos Código, Nome, CNPJ, Cidade e Estado; planilhas tabulares precisam de colunas de CNPJ, nome/razão social do sindicato e UF. As colunas Município, Categoria, Código Sindical e Base Territorial são opcionais. Registros inválidos são relatados no log `[DOCS]`; o robô não cria vínculos sindicais automaticamente. Compartilhe a pasta com a conta de serviço com acesso de edição. Arquivos já importados não são processados novamente.
-Quando o Mediador bloqueia a automação com CAPTCHA, anti-bot ou até sem resultado útil, o worker agora aciona automaticamente o fallback pelo site oficial do sindicato, extrai o PDF encontrado, persiste a CCT e segue o pipeline normal sem intervenção humana. O fluxo de upload manual para `Radar – Entrada` com o nome `CCT-<CNPJ com 14 dígitos>-<ANO>.pdf`, por exemplo `CCT-79831442000130-2026.pdf`, permanece apenas como contingência operacional. Nesse modo, o worker só aceita arquivo PDF válido quando há uma pendência `PENDENTE_DOWNLOAD_MANUAL` para o mesmo sindicato/ano e o texto extraído contém o CNPJ indicado; então persiste, extrai com IA, publica o PDF em `CCTs Extraídas` e adiciona a linha ao Painel. PDFs sem pendência ou cujo CNPJ não confira ficam marcados com erro para revisão.
-No GitHub Actions, execute `Agent Worker` manualmente com `retry_failed_union_imports` ativado para tentar novamente CSV/planilhas sindicais com erro na subpasta de cadastro e PDFs CCT identificados com erro na pasta `Radar – Entrada`. A rotina diária mantém o comportamento padrão; arquivos já importados não são repetidos.
+### MTE e fallback
 
-Após a transcrição, `src/services/claudeAgent.ts` seleciona Gemini ou Claude por `AI_PROVIDER` e valida um contrato JSON estrito com `impactos_folha` e `contribuicoes_sindicais`. O worker usa Gemini quando `AI_PROVIDER=gemini`; Claude continua disponível com `AI_PROVIDER=anthropic`. O serviço `src/services/cctExtractionPersistence.ts` grava esses itens em `ImpactoFolha` e `ContribuicaoSindical` dentro de uma transação serializável, preservando evidências textuais e registros já validados pelo DP. O módulo `src/services/cctOcr.ts` permanece responsável exclusivamente pela transcrição de PDFs.
+O scraper do Mediador:
 
-O worker usa locks distribuídos em PostgreSQL por CNPJ (`WORKER_LOCK_TTL_MS`). Falhas do MTE não bloqueiam a fila: cada sindicato registra `proximaTentativa` e `falhasConsecutivas`, com backoff exponencial entre `MTE_RETRY_BASE_DELAY_MS` e `MTE_RETRY_MAX_DELAY_MS`.
+- usa `playwright-extra` com `stealthPlugin()`;
+- aceita `MTE_PROXY_URL` para navegação via proxy residencial BR;
+- detecta anti-bot, CAPTCHA e respostas sem resultado útil;
+- persiste a evidência oficial quando o MTE entrega a CCT;
+- aciona `buscarCctNoSite(...)` automaticamente quando o MTE falha por bloqueio operacional.
 
-Em produção, `PORTAL_AUTH_ENABLED=true` exige `x-api-key` ou `Authorization: Bearer` nas rotas de negócio. Uploads e consultas que usam IA possuem rate limits próprios; o SSE envia heartbeats e remove o listener quando a conexão é encerrada.
+### IA e resiliência
 
-### 2. Worker em background
-O worker roda em cron às 02:00 e percorre sindicatos ativos para buscar atualizações e processar extrações.
+A extração em `src/services/claudeAgent.ts` e a leitura documental em `src/services/aiDocumentReader.ts`:
 
-### 3. Scraping do MTE
-O scraper usa Playwright para visitar o sistema do Ministério do Trabalho, preencher CNPJ e ano e retornar o texto oficial da CCT para processamento. Se o portal passar a exibir um CAPTCHA, a consulta é interrompida e sinalizada como falha operacional; não há bypass ou dado simulado.
+- escolhem o provedor primário por `AI_PROVIDER`;
+- reaplicam tentativas em erros transitórios (`429`, `500`, `502`, `503`, `504`, timeout etc.);
+- fazem failover automático para o provedor secundário quando ele estiver configurado;
+- expõem no `/readiness` se o failover está realmente armado (`aiFallbackConfigured`).
 
-### 4. Extração por IA
-O extrator usa Gemini ou Claude para interpretar o texto bruto e devolver JSON estruturado com valores relevantes de convenção, conforme `AI_PROVIDER`.
+Para produção, mantenha **as duas chaves** (`GEMINI_API_KEY` e `ANTHROPIC_API_KEY`) configuradas. Isso evita que um `503` temporário do Gemini interrompa a extração do worker sem alternativa.
 
-### 5. Persistência
-O Prisma armazena clientes, sindicatos, enquadramentos, CCTs e alertas em PostgreSQL. A aplicação usa migrations versionadas; `db push` não faz parte do fluxo de deploy.
+## Variáveis de ambiente
 
-## Modelos do banco
+O arquivo `.env.example` lista as variáveis de API, worker, MTE, rate limiting, alertas e integrações Google.
+As principais famílias são:
 
-- Cliente
-- Sindicato
-- Enquadramento
-- CCT
-- Alerta
+- banco: `DATABASE_URL`, `DIRECT_URL`;
+- IA: `AI_PROVIDER`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL`, `ANTHROPIC_VISION_MODEL`;
+- storage/workspace: `DOCUMENT_STORAGE_DRIVER`, `DOCUMENT_STORAGE_PATH`, `GOOGLE_*`;
+- MTE: `MTE_PROXY_URL`, `MTE_MAX_ATTEMPTS`, `MTE_BATCH_SIZE`, `MTE_DELAY_*`, `MTE_RETRY_*`, `WORKER_LOCK_TTL_MS`;
+- API: `PORTAL_AUTH_ENABLED`, `PORTAL_API_KEY`, `CORS_ORIGINS`, `RATE_LIMIT_*`, `UPLOAD_RATE_LIMIT_*`, `AI_RATE_LIMIT_*`;
+- alertas operacionais: `TI_WEBHOOK_URL`, `SMTP_*`, `ALERT_EMAIL_*`.
 
-A model `CCT` inclui um campo JSON para `parametros` para receber os dados extraídos da convenção.
+## GitHub Actions e go-live
 
-### Evolução da base para o Hub Sindical
+O workflow `Agent Worker` em `.github/workflows/agent-worker.yml` está alinhado com o ambiente de produção atual.
 
-O schema também possui a base da próxima etapa do produto:
+### GitHub Secrets obrigatórios para o worker
 
-- `Cliente.codigoErp` para relacionar a empresa ao Domínio/Alterdata e ao número importado do ERP.
-- `Sindicato.siteOficial` e campos de monitoramento para a busca antecipada nos portais sindicais.
-- `ImportacaoLote` e `ImportacaoLinha` para rastrear importações de clientes por Excel/CSV.
-- `ClausulaCct`, `ImpactoFolha` e `ContribuicaoSindical` para estruturar o painel do DP.
-- `EvidenciaCct` para preservar a origem e o hash de cada documento ou informação extraída.
-- `ExportacaoSindicato` para controlar futuros arquivos enviados aos sindicatos.
+- `DATABASE_URL`
+- `DIRECT_URL`
+- `GEMINI_API_KEY`
+- `ANTHROPIC_API_KEY`
+- `GOOGLE_CLIENT_EMAIL`
+- `GOOGLE_PRIVATE_KEY`
+- `GOOGLE_DRIVE_FOLDER_ID`
+- `GOOGLE_SHEET_ID`
+- `GOOGLE_DRIVE_INBOX_FOLDER_ID`
+- `GOOGLE_CUSTOM_SEARCH_API_KEY`
+- `GOOGLE_CUSTOM_SEARCH_ENGINE_ID`
+- `MTE_PROXY_URL`
 
-Os dados extraídos continuam sujeitos à validação do DP. Nenhum impacto financeiro ou contribuição deve ser tratado como aprovado apenas por ter sido produzido pela IA.
+### GitHub Secrets opcionais
 
-## Fluxo de execução
+- `TI_WEBHOOK_URL`
 
-1. O worker seleciona sindicatos ativos.
-2. O scraper consulta o MTE.
-3. O texto bruto é enviado ao provedor de IA configurado.
-4. A extração gera JSON estruturado.
-5. O resultado é salvo como `CCT` e dispara `Alerta`.
-6. A API expõe o conteúdo para o portal via endpoints e SSE.
+### GitHub Variables recomendadas
 
-## Como rodar localmente
+- `AI_PROVIDER` (`gemini` ou `anthropic`)
+- `GEMINI_MODEL`
+- `ANTHROPIC_MODEL`
+- `ANTHROPIC_VISION_MODEL`
+- `MTE_MAX_ATTEMPTS`
+- `MTE_NAVIGATION_TIMEOUT_MS`
+- `MTE_REQUEST_DELAY_MS`
+- `MTE_BATCH_SIZE`
+- `MTE_STALE_AFTER_HOURS`
+- `MTE_DELAY_MIN_MS`
+- `MTE_DELAY_MAX_MS`
+- `MTE_RETRY_BASE_DELAY_MS`
+- `MTE_RETRY_MAX_DELAY_MS`
+- `WORKER_LOCK_TTL_MS`
+
+Notas operacionais:
+
+- o workflow fixa `DOCUMENT_STORAGE_DRIVER=workspace` para publicar artefatos no Google Workspace;
+- o input manual `retry_failed_union_imports` reprocessa planilhas/PDFs com erro e pendências do MTE;
+- `PORTAL_AUTH_ENABLED` e `PORTAL_API_KEY` são necessários para a API, mas não para o workflow do worker.
+
+## Desenvolvimento local
+
+### Pré-requisitos
+
+- Node.js 22+
+- Docker + Docker Compose
+
+### Subir apenas o PostgreSQL local
 
 ```bash
-npm install
 cp .env.example .env
-npx prisma generate
-npm run prisma:migrate
-npm run dev
+docker compose up -d db
 ```
 
-## Scripts úteis
+### Rodar API e worker localmente
 
 ```bash
-npm run dev
+npm ci
 npm run build
-npm run typecheck
-npm run prisma:migrate
-npx prisma db seed
+npm start
+npm run start:worker
 ```
 
-### Supabase
-
-Para usar o pooler do Supabase, defina `DATABASE_URL` com a URL do pooler em modo transação (porta `6543` e `?pgbouncer=true`) e `DIRECT_URL` com a URL em modo sessão (porta `5432`). O Prisma usa `DATABASE_URL` nas consultas da aplicação e `DIRECT_URL` nas migrations. Configure ambas no `.env` local ou no gerenciador de segredos do ambiente; substitua o placeholder pela senha do banco e faça URL-encode de caracteres reservados. O `.env.example` mantém URLs locais para Docker Compose.
-
-## Docker
-
-O projeto inclui um `Dockerfile` baseado em `mcr.microsoft.com/playwright:v1.63.0-noble` e um `docker-compose.yml` com dois serviços:
-
-- `api`: executa o servidor Express
-- `worker`: executa o processamento em cron
-
-## Observações de operação
-
-- o banco usa PostgreSQL e exige `DATABASE_URL` válida
-- os valores sensíveis devem ficar em `.env`
-- o scraper não usa bypass de CAPTCHA; um desafio visível interrompe a consulta
-- o fluxo de extração deve validar JSON rigorosamente para evitar dados inconsistentes
-
-## Status do projeto
-
-O boilerplate do microserviço Radar Sindical foi criado com a base necessária para API, processamento em background, integração com Claude e Playwright, além da organização da estrutura exigida pelo projeto.
-
-## Verificação
-
-Executei a checagem de tipagem do projeto:
-
-```bash
-cd /workspaces/BuscaCCT && npm run typecheck -- --pretty false
-```
-
-Resultado verificado: o comando concluiu com sucesso, sem erros de TypeScript.
-
-Validação operacional adicional:
-
-- `npm test`: 15 testes aprovados.
-- `docker build -t busca-cct:validation .`: imagem construída com sucesso.
-- Smoke test do container: `GET /health` respondeu `200`.
-- E2E real do Mediador: o portal foi alcançado, mas bloqueou automação com desafio anti-bot. O scraper encerra a consulta sem bypass e sem fabricar dados.
-
-
-Configure `TI_WEBHOOK_URL` (e não `WEBHOOK_TI_URL`) para receber falhas do worker em Slack, Teams ou outro endpoint compatível
-com payload `{ "text": "..." }`. Falhas no webhook são apenas registradas e não interrompem a fila.
-
-### Docker
-
-O [Dockerfile](Dockerfile) inclui Chromium e compila a API para produção:
-
-```bash
-docker build -t busca-cct .
-docker run --env-file .env -p 3000:3000 busca-cct
-```
-
-O worker deve ser executado como processo/container separado usando o mesmo ambiente:
-
-```bash
-docker run --env-file .env busca-cct node dist/worker.js
-```
-
-Também há um [docker-compose.yml](docker-compose.yml) com API e worker separados, volume persistente e publicação do PostgreSQL local em `127.0.0.1:55432`, o que permite executar `npm test` e depurar o banco sem ajustes extras.
-com PostgreSQL persistente. Para subir o conjunto:
+### Rodar com Docker Compose
 
 ```bash
 cp .env.example .env
-# preencha ANTHROPIC_API_KEY e demais credenciais
 docker compose up -d --build
 docker compose ps
 docker compose logs -f worker
 ```
 
-Para produção com múltiplas réplicas, use lock distribuído para garantir uma única fila MTE ativa.
+## Testes e validação
 
-## Hardening e Segurança
+Com o PostgreSQL local disponível em `127.0.0.1:55432`, a suíte é determinística: `npm test` faz reset do banco, reaplica as migrations e executa os testes.
 
-Antes de expor o módulo para o portal principal, ative autenticação e limitação de taxa por ambiente:
+Validação atual do workspace:
 
-```bash
-PORTAL_AUTH_ENABLED=true
-PORTAL_API_KEY=chave-super-secreta
-CORS_ORIGINS=https://portal.contabilidade.com.br
-RATE_LIMIT_WINDOW_MS=60000
-RATE_LIMIT_MAX=120
-```
+- `npm run typecheck`
+- `npm run build`
+- `npm test` → `91` testes aprovados
 
-Quando `PORTAL_AUTH_ENABLED=true`, o backend exige `x-api-key` ou `Authorization: Bearer ...` em todas as rotas HTTP. Também aplica headers de segurança, CORS e rate limit.
+## Segurança e operação
 
-### Componentes relevantes
+- `PORTAL_AUTH_ENABLED=true` exige `x-api-key` ou `Authorization: Bearer ...` nas rotas protegidas.
+- uploads, consultas com IA e demais rotas têm rate limits independentes.
+- o scraper não tenta burlar CAPTCHA visual; quando necessário, usa fallback oficial por site ou preserva a pendência operacional.
+- o webhook de TI não interrompe a fila se falhar.
+- em múltiplas réplicas, o lock distribuído evita duas filas MTE no mesmo CNPJ.
 
-- `prisma/schema.prisma`: cache persistente das CCTs por CNPJ e ano.
-- `src/tools/mteScraper.ts`: extração automatizada do MTE via Playwright.
-- `src/services/claudeAgent.ts`: Tool Use, System Prompt estrito e extração JSON validada.
-- `src/services/radarDiscovery.ts`: importação da base de sindicatos e varredura de sites.
-- `src/services/alertService.ts`: geração e entrega de alertas no portal.
-- `src/jobs/dailyUpdate.ts`: cron jobs de varredura e atualização.
+## Observações finais
 
-O repositório é exclusivamente o microserviço backend. O componente React `CopilotoParametrizacao`
-e o hook de SSE devem ser incorporados pelo portal principal; não há frontend React versionado aqui.
-
-O extrator retorna `null` quando a CCT não informa um valor. Os campos monetários e percentuais
-são números sem `R$` ou `%`, e o retorno é rejeitado se não respeitar o schema `ExtracaoCct`.
-O módulo não audita folhas nem envia dados de funcionários para o Claude.
+- O repositório contém apenas o backend.
+- O portal/front-end consumidor dos endpoints não é versionado aqui.
+- O extrator retorna `null` quando a CCT não informa um valor explicitamente.
+- Campos monetários e percentuais são armazenados sem `R$` e sem `%`.
