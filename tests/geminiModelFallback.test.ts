@@ -9,14 +9,14 @@ test('tenta modelos alternativos do Gemini quando o primeiro retorna 404', async
     getGenerativeModel: ({ model }: { model: string }) => ({ modelName: model })
   } as any;
 
-  const resultado = await runWithGeminiModelFallback(genAI, 'gemini-1.5-flash', {}, async ({ modelName }) => {
+  const resultado = await runWithGeminiModelFallback(genAI, 'gemini-2.5-flash', {}, async ({ modelName }) => {
     tentativas.push(modelName);
-    if (modelName === 'gemini-1.5-flash') {
-      throw { status: 404, message: 'models/gemini-1.5-flash is not found for API version v1beta' };
+    if (modelName === 'gemini-2.5-flash') {
+      throw { status: 404, message: 'models/gemini-2.5-flash is not found for API version v1beta' };
     }
     return modelName;
   });
 
-  assert.equal(resultado, 'gemini-1.5-flash-latest');
-  assert.deepEqual(tentativas, ['gemini-1.5-flash', 'gemini-1.5-flash-latest']);
+  assert.equal(resultado, 'gemini-2.0-flash');
+  assert.deepEqual(tentativas, ['gemini-2.5-flash', 'gemini-2.0-flash']);
 });

@@ -1,7 +1,12 @@
 export type AiProvider = 'anthropic' | 'gemini';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-1.5-flash';
-const GEMINI_MODEL_FALLBACKS = ['gemini-1.5-flash-latest', 'gemini-1.0-pro'] as const;
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
+const GEMINI_MODEL_FALLBACKS = [
+  'gemini-2.0-flash',
+  'gemini-1.5-flash',
+  'gemini-1.5-flash-latest',
+  'gemini-1.0-pro'
+] as const;
 
 function normalizeValue(value: string | undefined): string {
   return (value ?? '')

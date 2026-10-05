@@ -13,14 +13,14 @@ test('normaliza AI_PROVIDER traduzido com acento', () => {
   assert.equal(normalizeAiProvider('Antrópica'), 'anthropic');
 });
 
-test('usa gemini-1.5-flash como default absoluto quando GEMINI_MODEL vier vazio', () => {
-  assert.equal(resolveGeminiModel(undefined), 'gemini-1.5-flash');
-  assert.equal(resolveGeminiModel(''), 'gemini-1.5-flash');
-  assert.equal(resolveGeminiModel('   '), 'gemini-1.5-flash');
+test('usa gemini-2.5-flash como default absoluto quando GEMINI_MODEL vier vazio', () => {
+  assert.equal(resolveGeminiModel(undefined), 'gemini-2.5-flash');
+  assert.equal(resolveGeminiModel(''), 'gemini-2.5-flash');
+  assert.equal(resolveGeminiModel('   '), 'gemini-2.5-flash');
 });
 
 test('monta fallback de modelos Gemini preservando o preferido', () => {
-  assert.deepEqual(resolveGeminiModelCandidates(undefined), ['gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.0-pro']);
-  assert.deepEqual(resolveGeminiModelCandidates('gemini-1.5-flash-latest'), ['gemini-1.5-flash-latest', 'gemini-1.5-flash', 'gemini-1.0-pro']);
-  assert.deepEqual(resolveGeminiModelCandidates('custom-model'), ['custom-model', 'gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.0-pro']);
+  assert.deepEqual(resolveGeminiModelCandidates(undefined), ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.0-pro']);
+  assert.deepEqual(resolveGeminiModelCandidates('gemini-2.0-flash'), ['gemini-2.0-flash', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.0-pro']);
+  assert.deepEqual(resolveGeminiModelCandidates('custom-model'), ['custom-model', 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-1.5-flash-latest', 'gemini-1.0-pro']);
 });

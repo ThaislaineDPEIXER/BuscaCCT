@@ -93,7 +93,7 @@ A extração em `src/services/claudeAgent.ts` e a leitura documental em `src/ser
 
 - escolhem o provedor primário por `AI_PROVIDER`;
 - reaplicam tentativas em erros transitórios (`429`, `500`, `502`, `503`, `504`, timeout etc.);
-- tentam `GEMINI_MODEL` e, em `404`/modelo incompatível no Gemini, fazem fallback para `gemini-1.5-flash-latest` e depois `gemini-1.0-pro`;
+- tentam `GEMINI_MODEL` e, em `404`/modelo incompatível no Gemini, fazem fallback para `gemini-2.0-flash`, `gemini-1.5-flash`, `gemini-1.5-flash-latest` e depois `gemini-1.0-pro`;
 - fazem failover automático para o provedor secundário quando ele estiver configurado;
 - expõem no `/readiness` se o failover está realmente armado (`aiFallbackConfigured`).
 
@@ -106,7 +106,7 @@ Para o estado atual de produção, os defaults operacionais ficam assim:
 
 ```env
 AI_PROVIDER=gemini
-GEMINI_MODEL=gemini-1.5-flash
+GEMINI_MODEL=gemini-2.5-flash
 ANTHROPIC_MODEL=claude-3-haiku-20240307
 ANTHROPIC_VISION_MODEL=claude-3-haiku-20240307
 MTE_MAX_ATTEMPTS=3
@@ -158,7 +158,7 @@ O workflow `Agent Worker` em `.github/workflows/agent-worker.yml` está alinhado
 Defaults atuais do worker em produção:
 
 - `AI_PROVIDER=gemini`
-- `GEMINI_MODEL=gemini-1.5-flash`
+- `GEMINI_MODEL=gemini-2.5-flash`
 - `ANTHROPIC_MODEL=claude-3-haiku-20240307`
 - `ANTHROPIC_VISION_MODEL=claude-3-haiku-20240307`
 - `MTE_MAX_ATTEMPTS=3`
