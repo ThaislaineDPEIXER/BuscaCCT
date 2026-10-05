@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env';
 import { runWithAiProviderFallback } from './aiResilience';
+import { runWithGeminiModelFallback } from './geminiModelFallback';
 
 export const MIME_TYPES_SUPORTADOS = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'] as const;
 export type MimeSuportado = typeof MIME_TYPES_SUPORTADOS[number];
@@ -33,20 +34,20 @@ let gemini: GoogleGenerativeAI | null = null;
 async function lerComGemini(documento: Buffer, mimeType: MimeSuportado, leitura: Leitura): Promise<string> {
   if (!env.geminiApiKey) throw new Error('GEMINI_API_KEY nao configurada');
   gemini ??= new GoogleGenerativeAI(env.geminiApiKey);
-  const model = gemini.getGenerativeModel({
-    model: env.geminiModel,
+  return runWithGeminiModelFallback(gemini, env.geminiModel, {
     systemInstruction: leitura.systemPrompt,
     generationConfig: {
       temperature: 0,
       maxOutputTokens: leitura.maxTokens,
       ...(leitura.json ? { responseMimeType: 'application/json' } : {})
     }
+  }, async ({ model }) => {
+    const resposta = await model.generateContent([
+      { inlineData: { data: documento.toString('base64'), mimeType } },
+      { text: leitura.instrucao }
+    ]);
+    return resposta.response.text().trim();
   });
-  const resposta = await model.generateContent([
-    { inlineData: { data: documento.toString('base64'), mimeType } },
-    { text: leitura.instrucao }
-  ]);
-  return resposta.response.text().trim();
 }
 
 async function lerComClaude(documento: Buffer, mimeType: MimeSuportado, leitura: Leitura): Promise<string> {

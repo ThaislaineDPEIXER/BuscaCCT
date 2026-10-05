@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env';
 import { runWithAiProviderFallback } from './aiResilience';
+import { runWithGeminiModelFallback } from './geminiModelFallback';
 import { buscarESalvarCCTComAno } from '../tools/mteScraper';
 import { consultarIndice } from '../tools/ibgeApi';
 
@@ -188,13 +189,13 @@ async function extrairCctComAnthropic(textoBruto: string): Promise<ExtracaoCct> 
 
 async function extrairCctComGemini(textoBruto: string): Promise<ExtracaoCct> {
   if (!gemini) throw new Error('GEMINI_API_KEY nao configurada');
-  const model = gemini.getGenerativeModel({
-    model: env.geminiModel,
+  return runWithGeminiModelFallback(gemini, env.geminiModel, {
     systemInstruction: SYSTEM_PROMPT_EXTRACAO_CCT,
     generationConfig: { temperature: 0, responseMimeType: 'application/json' }
+  }, async ({ model }) => {
+    const resposta = await model.generateContent(`Extraia os dados desta CCT:\n\n${textoBruto}`);
+    return validarRespostaExtracao(resposta.response.text(), 'Gemini');
   });
-  const resposta = await model.generateContent(`Extraia os dados desta CCT:\n\n${textoBruto}`);
-  return validarRespostaExtracao(resposta.response.text(), 'Gemini');
 }
 
 export async function extrairCctComIa(textoBruto: string): Promise<ExtracaoCct> {

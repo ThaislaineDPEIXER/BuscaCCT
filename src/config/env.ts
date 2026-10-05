@@ -1,6 +1,6 @@
 import 'dotenv/config';
 
-import { normalizeAiProvider, resolveGeminiModel } from './aiSettings';
+import { normalizeAiProvider, resolveGeminiModel, resolveGeminiModelCandidates } from './aiSettings';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -54,6 +54,7 @@ export const env = {
   anthropicVisionModel: process.env.ANTHROPIC_VISION_MODEL ?? 'claude-3-haiku-20240307',
   geminiApiKey,
   geminiModel: resolveGeminiModel(process.env.GEMINI_MODEL),
+  geminiModelCandidates: resolveGeminiModelCandidates(process.env.GEMINI_MODEL),
   aiFallbackProvider: (aiProvider === 'gemini' ? 'anthropic' : 'gemini') as 'anthropic' | 'gemini',
   aiFallbackConfigured: aiProvider === 'gemini' ? Boolean(anthropicApiKey) : Boolean(geminiApiKey),
   ibgeBaseUrl: process.env.IBGE_BASE_URL ?? 'https://servicodados.ibge.gov.br/api/v3/agregados',

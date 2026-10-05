@@ -6,6 +6,7 @@ import { chromium } from 'playwright';
 import { env } from '../config/env';
 import { prisma } from '../db';
 import { runWithAiProviderFallback } from './aiResilience';
+import { runWithGeminiModelFallback } from './geminiModelFallback';
 import { criarAlertaNoticiaSite } from './alertService';
 import { storePdf } from './documentStorage';
 
@@ -146,13 +147,13 @@ async function analisarTextoComAnthropic(sindicato: string, texto: string): Prom
 
 async function analisarTextoComGemini(sindicato: string, texto: string): Promise<RadarResultado> {
   if (!gemini) throw new Error('GEMINI_API_KEY nao configurada');
-  const model = gemini.getGenerativeModel({
-    model: env.geminiModel,
+  return runWithGeminiModelFallback(gemini, env.geminiModel, {
     systemInstruction: SYSTEM_PROMPT_RADAR,
     generationConfig: { temperature: 0, responseMimeType: 'application/json' }
+  }, async ({ model }) => {
+    const resposta = await model.generateContent(montarPromptRadar(sindicato, texto));
+    return validarRadarResultado(resposta.response.text());
   });
-  const resposta = await model.generateContent(montarPromptRadar(sindicato, texto));
-  return validarRadarResultado(resposta.response.text());
 }
 
 async function analisarTexto(sindicato: string, texto: string): Promise<RadarResultado> {

@@ -64,7 +64,7 @@ function isQuotaExhaustedAiError(error: unknown): boolean {
   });
 }
 
-function isProviderCapabilityAiError(error: unknown): boolean {
+export function isProviderCapabilityAiError(error: unknown): boolean {
   const { status, message } = getErrorDetails(error);
   if (status !== 404 && status !== 400) return false;
   return PROVIDER_CAPABILITY_MESSAGE.test(message);

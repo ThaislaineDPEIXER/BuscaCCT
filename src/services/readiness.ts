@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env';
 import { prisma } from '../db';
+import { runWithGeminiModelFallback } from './geminiModelFallback';
 
 const anthropic = env.anthropicApiKey ? new Anthropic({ apiKey: env.anthropicApiKey }) : null;
 const gemini = env.geminiApiKey ? new GoogleGenerativeAI(env.geminiApiKey) : null;
@@ -57,11 +58,11 @@ async function probeAnthropic(): Promise<void> {
 
 async function probeGemini(): Promise<void> {
   if (!gemini) throw new Error('GEMINI_API_KEY nao configurada');
-  const model = gemini.getGenerativeModel({
-    model: env.geminiModel,
+  await runWithGeminiModelFallback(gemini, env.geminiModel, {
     generationConfig: { temperature: 0, maxOutputTokens: 1 }
+  }, async ({ model }) => {
+    await withTimeout(model.generateContent('Responda apenas OK.'), 5_000);
   });
-  await withTimeout(model.generateContent('Responda apenas OK.'), 5_000);
 }
 
 export async function verificarReadiness(): Promise<ReadinessResult> {

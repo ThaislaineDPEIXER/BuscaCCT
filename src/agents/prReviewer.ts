@@ -3,6 +3,7 @@ import * as github from '@actions/github';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
 import { resolveGeminiModel } from '../config/aiSettings';
+import { runWithGeminiModelFallback } from '../services/geminiModelFallback';
 
 const MAX_DIFF_LENGTH = 120_000;
 const COMMENT_MARKER = '## 🤖 Revisão Arquitetural Automatizada';
@@ -55,8 +56,7 @@ async function loadPullRequestDiff(token: string, owner: string, repo: string, p
 
 async function analyzeDiff(diffText: string): Promise<string> {
   const geminiApiKey = requireEnv('GEMINI_API_KEY');
-  const client = new GoogleGenerativeAI(geminiApiKey);
-  const model = client.getGenerativeModel({ model: resolveGeminiModel(process.env.GEMINI_MODEL) });
+  const genAI = new GoogleGenerativeAI(geminiApiKey);
 
   const prompt = [
     'Você é um Arquiteto de Software revisando um Pull Request.',
@@ -72,8 +72,10 @@ async function analyzeDiff(diffText: string): Promise<string> {
     diffText
   ].join('\n');
 
-  const result = await model.generateContent(prompt);
-  const response = result.response.text().trim();
+  const response = await runWithGeminiModelFallback(genAI, resolveGeminiModel(process.env.GEMINI_MODEL), {}, async ({ model }) => {
+    const result = await model.generateContent(prompt);
+    return result.response.text().trim();
+  });
 
   if (!response) {
     return 'O Gemini não retornou observações para este Pull Request.';
