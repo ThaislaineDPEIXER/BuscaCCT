@@ -246,7 +246,7 @@ export async function buscarESalvarCCTComAno(cnpj: string, anoVigencia: number):
             url: consulta.fonteUrl,
             storagePath: documento.storagePath,
             hashSha256: documento.hashSha256,
-            referencia: 'PDF original capturado no Sistema Mediador.'
+            referencia: 'PDF gerado pela impressao da visualizacao oficial do Sistema Mediador.'
           }
         });
       }
@@ -474,44 +474,15 @@ async function consultarMediador(page: Page, context: BrowserContext, cnpj: stri
   const documentPage = (await popup) ?? page;
   await documentPage.waitForLoadState('domcontentloaded');
   let texto = (await documentPage.locator('body').innerText()).trim();
-  let pdfBuffer: Buffer | undefined;
-  let fonteUrl = documentPage.url();
-  if (texto.length < 300) {
-    const resposta = await context.request.get(fonteUrl, { timeout: env.mteNavigationTimeoutMs });
-    const contentType = resposta.headers()['content-type'] ?? 'desconhecido';
-    const conteudo = await resposta.body();
-    if (resposta.ok() && corpoTemAssinaturaPdf(conteudo)) {
-      pdfBuffer = conteudo;
-    } else {
-      const origem = new URL(fonteUrl).origin;
-      const links = await documentPage.locator('a[href]').evaluateAll(anchors => anchors.map(anchor => ({
-        href: (anchor as HTMLAnchorElement).href,
-        texto: anchor.textContent?.trim() ?? ''
-      })));
-      const candidatos = links.filter(link => {
-        try {
-          return new URL(link.href).origin === origem
-            && /pdf|download|baixar|arquivo|documento|visualizar|instrumento/i.test(`${link.href} ${link.texto}`);
-        } catch {
-          return false;
-        }
-      }).slice(0, 12);
-
-      for (const candidato of candidatos) {
-        const respostaCandidata = await context.request.get(candidato.href, { timeout: env.mteNavigationTimeoutMs });
-        const conteudoCandidato = await respostaCandidata.body();
-        if (!respostaCandidata.ok() || !corpoTemAssinaturaPdf(conteudoCandidato)) continue;
-        pdfBuffer = conteudoCandidato;
-        fonteUrl = candidato.href;
-        break;
-      }
-
-      if (!pdfBuffer) {
-        throw new CctUnavailableError(`Mediador retornou texto insuficiente e nenhum PDF válido. URL: ${fonteUrl}; HTTP: ${resposta.status()}; content-type: ${contentType}; links candidatos: ${JSON.stringify(candidatos)}`);
-      }
-    }
-    texto = await extrairTextoPdf(pdfBuffer);
+  const fonteUrl = documentPage.url();
+  let pdfBuffer: Buffer;
+  try {
+    pdfBuffer = await documentPage.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true });
+  } catch (error) {
+    throw new CctUnavailableError(`Nao foi possivel imprimir a visualizacao do Mediador em PDF: ${String(error)}`);
   }
+  if (!corpoTemAssinaturaPdf(pdfBuffer)) throw new CctUnavailableError('A impressao da visualizacao do Mediador nao gerou um PDF valido.');
+  if (texto.length < 300) texto = await extrairTextoPdf(pdfBuffer);
   if (!texto) throw new CctUnavailableError('Mediador retornou uma CCT vazia');
   if (documentPage !== page) await documentPage.close();
   return { texto, pdf: pdfBuffer, fonteUrl, anoVigencia: resultadoSelecionado.anoVigencia };
