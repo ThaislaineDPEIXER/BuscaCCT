@@ -5,10 +5,25 @@ import { env } from '../config/env';
 export const MIME_TYPES_SUPORTADOS = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'] as const;
 export type MimeSuportado = typeof MIME_TYPES_SUPORTADOS[number];
 
-type Leitura = { systemPrompt: string; instrucao: string; json: boolean; maxTokens: number };
+export type LeituraDocumentoIa = { systemPrompt: string; instrucao: string; json: boolean; maxTokens: number };
+type Leitura = LeituraDocumentoIa;
+type DriverLeitura = (documento: Buffer, mimeType: MimeSuportado, leitura: Leitura) => Promise<string>;
 
 export function mimeSuportado(mimeType: string | null | undefined): mimeType is MimeSuportado {
   return (MIME_TYPES_SUPORTADOS as readonly string[]).includes(mimeType ?? '');
+}
+
+export async function executarLeituraComIaPorProvider(
+  provider: 'anthropic' | 'gemini',
+  documento: Buffer,
+  mimeType: MimeSuportado,
+  leitura: Leitura,
+  drivers: { gemini: DriverLeitura; anthropic: DriverLeitura }
+): Promise<string> {
+  if (documento.length === 0) throw new Error('Documento vazio.');
+  return provider === 'gemini'
+    ? drivers.gemini(documento, mimeType, leitura)
+    : drivers.anthropic(documento, mimeType, leitura);
 }
 
 let anthropic: Anthropic | null = null;
@@ -56,8 +71,8 @@ async function lerComClaude(documento: Buffer, mimeType: MimeSuportado, leitura:
 }
 
 export async function lerDocumentoComIa(documento: Buffer, mimeType: MimeSuportado, leitura: Leitura): Promise<string> {
-  if (documento.length === 0) throw new Error('Documento vazio.');
-  return env.aiProvider === 'gemini'
-    ? lerComGemini(documento, mimeType, leitura)
-    : lerComClaude(documento, mimeType, leitura);
+  return executarLeituraComIaPorProvider(env.aiProvider as 'anthropic' | 'gemini', documento, mimeType, leitura, {
+    gemini: lerComGemini,
+    anthropic: lerComClaude
+  });
 }

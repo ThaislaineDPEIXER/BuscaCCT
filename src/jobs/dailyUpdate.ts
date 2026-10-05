@@ -7,7 +7,7 @@ import { extrairCctComIa } from '../services/claudeAgent';
 import { persistirExtracaoCct } from '../services/cctExtractionPersistence';
 import { enviarDigest, gerarAlertasDataBase } from '../services/alertService';
 import { notificarFalhaMte } from '../services/operationalAlert';
-import { varrerSindicato } from '../services/radarDiscovery';
+import { buscarCctNoSite, varrerSindicato } from '../services/radarDiscovery';
 import { adquirirWorkerLock } from '../services/workerLock';
 import { resolveStoredDocumentPath } from '../services/documentStorage';
 import { storePdf } from '../services/documentStorage';
@@ -15,7 +15,7 @@ import { STATUS_ENQUADRAMENTO, rotuloStatusEnquadramento } from '../services/enq
 import { appendRowToSheet, baixarArquivoDrive, ensureCctDashboard, ensureDriveFolder, listarDocumentosPendentes, marcarDocumento, moverArquivoDriveParaPasta, syncEnquadramentoMatrix, uploadPdfToDrive, uploadTextToDrive } from '../services/googleWorkspace';
 import { extrairTextoPdf } from '../services/cctOcr';
 import { identificarPdfCctManual, textoContemCnpj } from '../services/documentImport';
-import { buscarESalvarCCTComAno, CctAccessBlockedError, CctCaptchaRequiredError } from '../tools/mteScraper';
+import { buscarESalvarCCTComAno, CctAccessBlockedError, CctCaptchaRequiredError, CctManualDownloadRequiredError, CctNoResultsError, type ResultadoBuscaCct } from '../tools/mteScraper';
 import { importarDocumentosDoDrive } from './importDocuments';
 import { syncAdminSheets } from './syncAdminSheets';
 
@@ -75,6 +75,27 @@ export function descreverImpacto(totalImpactos: number, resumo: string | null): 
     ? `Alerta: ${totalImpactos} impacto(s) na folha`
     : 'Sem alteração';
   return resumo ? `${alerta} — ${resumo}` : alerta;
+}
+
+export function deveAcionarFallbackAutomaticoMte(error: unknown): boolean {
+  return error instanceof CctAccessBlockedError
+    || error instanceof CctCaptchaRequiredError
+    || error instanceof CctManualDownloadRequiredError
+    || error instanceof CctNoResultsError;
+}
+
+async function buscarCctPorFallbackAutomatico(sindicatoId: string, cnpjSindicato: string, anoVigencia: number, causa: unknown): Promise<ResultadoBuscaCct> {
+  console.warn(`[MTE] Acionando fallback automático por site para ${cnpjSindicato}/${anoVigencia}:`, causa);
+  const resultado = await buscarCctNoSite(sindicatoId);
+  const cct = await prisma.convencaoColetiva.findUnique({
+    where: { cnpjSindicato_anoVigencia: { cnpjSindicato, anoVigencia: resultado.anoVigencia } },
+    select: { textoCompleto: true }
+  });
+  const texto = cct?.textoCompleto?.trim();
+  if (!texto) {
+    throw new Error(`Fallback por site não persistiu texto utilizável para ${cnpjSindicato}/${resultado.anoVigencia}.`);
+  }
+  return { texto, anoVigencia: resultado.anoVigencia, fonteUrl: resultado.fonteUrl };
 }
 
 async function sincronizarMatrizEnquadramento(): Promise<void> {
@@ -388,7 +409,13 @@ export async function executarFilaMte(): Promise<void> {
       try {
         console.info(`[MTE] Processando ${sindicato.cnpj} (${sindicato.razaoSocial})`);
         const anoVigencia = new Date().getFullYear();
-        const resultadoCct = await buscarESalvarCCTComAno(sindicato.cnpj, anoVigencia);
+        let resultadoCct: ResultadoBuscaCct;
+        try {
+          resultadoCct = await buscarESalvarCCTComAno(sindicato.cnpj, anoVigencia);
+        } catch (error) {
+          if (!deveAcionarFallbackAutomaticoMte(error)) throw error;
+          resultadoCct = await buscarCctPorFallbackAutomatico(sindicato.id, sindicato.cnpj, anoVigencia, error);
+        }
         await publicarCctNoWorkspace(sindicato, resultadoCct.anoVigencia, false);
         const parametros = await extrairCctComIa(resultadoCct.texto);
 

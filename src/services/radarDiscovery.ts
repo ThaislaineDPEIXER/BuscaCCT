@@ -1,15 +1,18 @@
 import crypto from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import axios from 'axios';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { chromium } from 'playwright';
 import { env } from '../config/env';
 import { prisma } from '../db';
 import { criarAlertaNoticiaSite } from './alertService';
 import { storePdf } from './documentStorage';
 
-const anthropic = new Anthropic({ apiKey: env.anthropicApiKey });
+const anthropic = env.anthropicApiKey ? new Anthropic({ apiKey: env.anthropicApiKey }) : null;
+const gemini = env.geminiApiKey ? new GoogleGenerativeAI(env.geminiApiKey) : null;
 const CNAE_SINDICATO = '9420-1/00';
 const INTERESSE = /noticia|notícia|convencao|convenção|acordo|reajuste|negociacao|negociação|cct/i;
+const SYSTEM_PROMPT_RADAR = 'Responda somente JSON valido. Nao invente percentuais, datas ou clausulas que nao estejam no texto.';
 
 export interface SindicatoInput {
   cnpj: string;
@@ -25,6 +28,12 @@ export interface RadarResultado {
   resumo_comunicado: string | null;
   evidencias: string[];
 }
+
+type CctExistenteResumo = {
+  fonteTipo: string;
+  status: string;
+  textoCompleto: string;
+};
 
 function normalizarCnpj(cnpj: string): string {
   const valor = cnpj.replace(/\D/g, '');
@@ -109,17 +118,55 @@ async function rastrearSite(urlInicial: string): Promise<{ texto: string; url: s
   }
 }
 
-async function analisarTexto(sindicato: string, texto: string): Promise<RadarResultado> {
+function montarPromptRadar(sindicato: string, texto: string): string {
+  return `Analise as publicacoes do sindicato ${sindicato}. Identifique comunicados sobre nova CCT, ACT ou reajuste salarial. Responda exatamente com {"nova_cct_encontrada": boolean, "resumo_comunicado": string|null, "evidencias": string[]}. Texto:\n${texto}`;
+}
+
+function validarRadarResultado(bruto: string): RadarResultado {
+  const resultado = JSON.parse(bruto.replace(/^```json\s*|\s*```$/g, '').trim()) as RadarResultado;
+  if (typeof resultado.nova_cct_encontrada !== 'boolean' || !Array.isArray(resultado.evidencias)) throw new Error('Resposta do Claude fora do contrato');
+  return resultado;
+}
+
+async function analisarTextoComAnthropic(sindicato: string, texto: string): Promise<RadarResultado> {
+  if (!anthropic) throw new Error('ANTHROPIC_API_KEY nao configurada');
   const resposta = await anthropic.messages.create({
     model: env.anthropicModel,
     max_tokens: 800,
-    system: 'Responda somente JSON valido. Nao invente percentuais, datas ou clausulas que nao estejam no texto.',
-    messages: [{ role: 'user', content: `Analise as publicacoes do sindicato ${sindicato}. Identifique comunicados sobre nova CCT, ACT ou reajuste salarial. Responda exatamente com {"nova_cct_encontrada": boolean, "resumo_comunicado": string|null, "evidencias": string[]}. Texto:\n${texto}` }]
+    system: SYSTEM_PROMPT_RADAR,
+    messages: [{ role: 'user', content: montarPromptRadar(sindicato, texto) }]
   });
-  const bruto = resposta.content.filter((item): item is Anthropic.TextBlock => item.type === 'text').map(item => item.text).join('').replace(/^```json\s*|\s*```$/g, '').trim();
-  const resultado = JSON.parse(bruto) as RadarResultado;
-  if (typeof resultado.nova_cct_encontrada !== 'boolean' || !Array.isArray(resultado.evidencias)) throw new Error('Resposta do Claude fora do contrato');
-  return resultado;
+  const bruto = resposta.content
+    .filter((item): item is Anthropic.TextBlock => item.type === 'text')
+    .map(item => item.text)
+    .join('');
+  return validarRadarResultado(bruto);
+}
+
+async function analisarTextoComGemini(sindicato: string, texto: string): Promise<RadarResultado> {
+  if (!gemini) throw new Error('GEMINI_API_KEY nao configurada');
+  const model = gemini.getGenerativeModel({
+    model: env.geminiModel,
+    systemInstruction: SYSTEM_PROMPT_RADAR,
+    generationConfig: { temperature: 0, responseMimeType: 'application/json' }
+  });
+  const resposta = await model.generateContent(montarPromptRadar(sindicato, texto));
+  return validarRadarResultado(resposta.response.text());
+}
+
+async function analisarTexto(sindicato: string, texto: string): Promise<RadarResultado> {
+  return env.aiProvider === 'gemini'
+    ? analisarTextoComGemini(sindicato, texto)
+    : analisarTextoComAnthropic(sindicato, texto);
+}
+
+export function devePreservarCctMteComoFontePrincipal(existente: CctExistenteResumo | null | undefined): boolean {
+  return Boolean(
+    existente
+    && existente.fonteTipo === 'MTE'
+    && existente.status !== 'PENDENTE_DOWNLOAD_MANUAL'
+    && existente.textoCompleto.trim()
+  );
 }
 
 export async function varrerSindicato(id: string): Promise<RadarResultado> {
@@ -187,7 +234,7 @@ export async function buscarCctNoSite(sindicatoId: string): Promise<{ cctId: str
     where: { cnpjSindicato_anoVigencia: { cnpjSindicato: sindicato.cnpj, anoVigencia } }
   });
 
-  if (existente?.fonteTipo === 'MTE') {
+  if (existente && devePreservarCctMteComoFontePrincipal(existente)) {
     await prisma.evidenciaCct.create({
       data: {
         convencaoColetivaId: existente.id,
@@ -209,6 +256,7 @@ export async function buscarCctNoSite(sindicatoId: string): Promise<{ cctId: str
       fonteUrl: documentoUrl,
       documentoStoragePath: documento.storagePath,
       hashDocumento: documento.hashSha256,
+      status: 'CAPTURADA',
       dataConsulta: new Date()
     },
     create: {

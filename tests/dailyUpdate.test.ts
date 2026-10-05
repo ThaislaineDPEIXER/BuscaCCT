@@ -2,8 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { SHEET_LAYOUT } from '../src/services/googleWorkspace';
-import { cctsQueBloqueiamFila, descreverImpacto, filtroElegibilidadeFilaMte, montarLinhaPainel, startCronJobs } from '../src/jobs/dailyUpdate';
+import { cctsQueBloqueiamFila, descreverImpacto, deveAcionarFallbackAutomaticoMte, filtroElegibilidadeFilaMte, montarLinhaPainel, startCronJobs } from '../src/jobs/dailyUpdate';
 import { rotuloStatusEnquadramento } from '../src/services/enquadramentoStatus';
+import { CctAccessBlockedError, CctNoResultsError, CctUnavailableError } from '../src/tools/mteScraper';
 
 test('montarLinhaPainel separa código, nome e CNPJ do sindicato na ordem do cabeçalho', () => {
   const data = new Date('2026-09-29T06:00:00.000Z');
@@ -43,6 +44,12 @@ test('retry da fila MTE prioriza pendências manuais mesmo com backoff ou varred
   assert.deepEqual(elegibilidade.OR[1], {
     convencoes: { some: { anoVigencia: 2026, status: 'PENDENTE_DOWNLOAD_MANUAL' } }
   });
+});
+
+test('fallback automático é acionado para bloqueio anti-bot e falta de resultado no MTE', () => {
+  assert.equal(deveAcionarFallbackAutomaticoMte(new CctAccessBlockedError('bloqueado')), true);
+  assert.equal(deveAcionarFallbackAutomaticoMte(new CctNoResultsError('sem resultado')), true);
+  assert.equal(deveAcionarFallbackAutomaticoMte(new CctUnavailableError('erro genérico')), false);
 });
 
 test('rotuloStatusEnquadramento traduz os status gravados', () => {

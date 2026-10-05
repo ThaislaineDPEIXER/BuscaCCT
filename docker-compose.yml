@@ -4,7 +4,9 @@ services:
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-radar_sindical}
       POSTGRES_USER: ${POSTGRES_USER:-radar}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD deve ser definida}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    ports:
+      - "55432:5432"
     volumes:
       - busca-cct-postgres:/var/lib/postgresql/data
     healthcheck:
