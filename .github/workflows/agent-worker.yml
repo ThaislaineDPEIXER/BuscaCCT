@@ -56,6 +56,8 @@ jobs:
           GOOGLE_DRIVE_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_FOLDER_ID }}
           GOOGLE_SHEET_ID: ${{ secrets.GOOGLE_SHEET_ID }}
           GOOGLE_DRIVE_INBOX_FOLDER_ID: ${{ secrets.GOOGLE_DRIVE_INBOX_FOLDER_ID }}
+          GOOGLE_CUSTOM_SEARCH_API_KEY: ${{ secrets.GOOGLE_CUSTOM_SEARCH_API_KEY }}
+          GOOGLE_CUSTOM_SEARCH_ENGINE_ID: ${{ secrets.GOOGLE_CUSTOM_SEARCH_ENGINE_ID }}
           RETRY_FAILED_UNION_IMPORTS: ${{ inputs.retry_failed_union_imports || 'false' }}
           MTE_PROXY_URL: ${{ secrets.MTE_PROXY_URL }}
         run: npm run start:worker

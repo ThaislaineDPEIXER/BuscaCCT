@@ -5,6 +5,7 @@ import { GoogleGenerativeAI } from '@google/generative-ai';
 import { chromium } from 'playwright';
 import { env } from '../config/env';
 import { prisma } from '../db';
+import { runWithAiProviderFallback } from './aiResilience';
 import { criarAlertaNoticiaSite } from './alertService';
 import { storePdf } from './documentStorage';
 
@@ -155,9 +156,14 @@ async function analisarTextoComGemini(sindicato: string, texto: string): Promise
 }
 
 async function analisarTexto(sindicato: string, texto: string): Promise<RadarResultado> {
-  return env.aiProvider === 'gemini'
-    ? analisarTextoComGemini(sindicato, texto)
-    : analisarTextoComAnthropic(sindicato, texto);
+  return runWithAiProviderFallback({
+    provider: env.aiProvider as 'anthropic' | 'gemini',
+    operation: 'radar-sindical',
+    handlers: {
+      gemini: gemini ? () => analisarTextoComGemini(sindicato, texto) : undefined,
+      anthropic: anthropic ? () => analisarTextoComAnthropic(sindicato, texto) : undefined
+    }
+  });
 }
 
 export function devePreservarCctMteComoFontePrincipal(existente: CctExistenteResumo | null | undefined): boolean {

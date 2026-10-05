@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env';
+import { runWithAiProviderFallback } from './aiResilience';
 
 export const MIME_TYPES_SUPORTADOS = ['application/pdf', 'image/png', 'image/jpeg', 'image/webp'] as const;
 export type MimeSuportado = typeof MIME_TYPES_SUPORTADOS[number];
@@ -71,8 +72,12 @@ async function lerComClaude(documento: Buffer, mimeType: MimeSuportado, leitura:
 }
 
 export async function lerDocumentoComIa(documento: Buffer, mimeType: MimeSuportado, leitura: Leitura): Promise<string> {
-  return executarLeituraComIaPorProvider(env.aiProvider as 'anthropic' | 'gemini', documento, mimeType, leitura, {
-    gemini: lerComGemini,
-    anthropic: lerComClaude
+  return runWithAiProviderFallback({
+    provider: env.aiProvider as 'anthropic' | 'gemini',
+    operation: 'leitura-documento',
+    handlers: {
+      gemini: env.geminiApiKey ? () => executarLeituraComIaPorProvider('gemini', documento, mimeType, leitura, { gemini: lerComGemini, anthropic: lerComClaude }) : undefined,
+      anthropic: env.anthropicApiKey ? () => executarLeituraComIaPorProvider('anthropic', documento, mimeType, leitura, { gemini: lerComGemini, anthropic: lerComClaude }) : undefined
+    }
   });
 }

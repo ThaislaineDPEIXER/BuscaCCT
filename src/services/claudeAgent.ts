@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env';
+import { runWithAiProviderFallback } from './aiResilience';
 import { buscarESalvarCCTComAno } from '../tools/mteScraper';
 import { consultarIndice } from '../tools/ibgeApi';
 
@@ -198,9 +199,14 @@ async function extrairCctComGemini(textoBruto: string): Promise<ExtracaoCct> {
 
 export async function extrairCctComIa(textoBruto: string): Promise<ExtracaoCct> {
   if (!textoBruto.trim()) throw new Error('Texto bruto da CCT vazio');
-  return env.aiProvider === 'gemini'
-    ? extrairCctComGemini(textoBruto)
-    : extrairCctComAnthropic(textoBruto);
+  return runWithAiProviderFallback({
+    provider: env.aiProvider as 'anthropic' | 'gemini',
+    operation: 'extracao-cct',
+    handlers: {
+      gemini: gemini ? () => extrairCctComGemini(textoBruto) : undefined,
+      anthropic: anthropic ? () => extrairCctComAnthropic(textoBruto) : undefined
+    }
+  });
 }
 
 export async function consultarBuscador(pergunta: string): Promise<string> {
