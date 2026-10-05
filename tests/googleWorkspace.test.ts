@@ -8,9 +8,12 @@ import {
   SHEET_LAYOUT,
   cabecalhoDoPainel,
   dashboardNeedsHeaders,
+  ensureDriveFolder,
   hasConditionalRule,
   isSummaryRule,
-  listarDocumentosPendentes
+  listarDocumentosPendentes,
+  moverArquivoDriveParaPasta,
+  uploadTextToDrive
 } from '../src/services/googleWorkspace';
 
 test('dashboardNeedsHeaders só inicializa quando o cabeçalho estiver vazio', () => {
@@ -114,6 +117,73 @@ test('reprocessamento manual inclui planilhas sindicais e PDFs CCT identificados
     assert.deepEqual(documentos.map(item => item.nome), ['CCT-79831442000130-2026.pdf', 'sindicatos.xls', 'sindicatos.csv']);
     assert.ok(consultas.some(q => q.includes("'subpasta' in parents") && !q.includes("value='erro'")));
     assert.ok(consultas.some(q => q.includes("'entrada' in parents") && !q.includes("value='erro'")));
+  } finally {
+    drive.mock.restore();
+  }
+});
+
+test('ensureDriveFolder reutiliza uma subpasta existente e cria a ausente', async () => {
+  const criadas: Array<{ name: string; parents: string[] }> = [];
+  const drive = mock.method(googleDrive, 'drive', () => ({
+    files: {
+      list: async ({ q }: { q: string }) => ({
+        data: { files: q.includes("name = '2026'") ? [{ id: 'ano-existente' }] : [] }
+      }),
+      create: async ({ requestBody }: { requestBody: { name: string; parents: string[] } }) => {
+        criadas.push(requestBody);
+        return { data: { id: 'sindicato-criado' } };
+      }
+    }
+  }) as never);
+  try {
+    assert.equal(await ensureDriveFolder('raiz', '2026'), 'ano-existente');
+    assert.equal(await ensureDriveFolder('ano-existente', '79831442000130 - SINDPD SC'), 'sindicato-criado');
+    assert.deepEqual(criadas, [{ name: '79831442000130 - SINDPD SC', mimeType: 'application/vnd.google-apps.folder', parents: ['ano-existente'] }]);
+  } finally {
+    drive.mock.restore();
+  }
+});
+
+test('uploadTextToDrive atualiza o resumo existente sem criar arquivo duplicado', async () => {
+  let atualizado = false;
+  let compartilhado = false;
+  const drive = mock.method(googleDrive, 'drive', () => ({
+    files: {
+      list: async () => ({ data: { files: [{ id: 'resumo-existente', webViewLink: 'https://drive.google.com/file/d/resumo-existente/view' }] } }),
+      update: async ({ fileId, media }: { fileId: string; media: { mimeType: string; body: NodeJS.ReadableStream } }) => {
+        atualizado = fileId === 'resumo-existente' && media.mimeType === 'text/plain' && Boolean(media.body);
+        return { data: { id: fileId, webViewLink: 'https://drive.google.com/file/d/resumo-existente/view' } };
+      },
+      create: async () => { throw new Error('nao deve criar duplicata'); },
+      permissions: { create: async () => { compartilhado = true; } }
+    }
+  }) as never);
+  try {
+    const link = await uploadTextToDrive('Resumo.txt', 'Resumo atualizado', 'pasta-sindicato');
+    assert.equal(link, 'https://drive.google.com/file/d/resumo-existente/view');
+    assert.equal(atualizado, true);
+    assert.equal(compartilhado, false);
+  } finally {
+    drive.mock.restore();
+  }
+});
+
+test('moverArquivoDriveParaPasta transfere o PDF existente para a pasta do sindicato', async () => {
+  let update: { addParents?: string; removeParents?: string } | undefined;
+  const drive = mock.method(googleDrive, 'drive', () => ({
+    files: {
+      get: async () => ({ data: { parents: ['raiz-antiga'] } }),
+      update: async (request: { addParents?: string; removeParents?: string }) => {
+        update = request;
+        return { data: { webViewLink: 'https://drive.google.com/file/d/pdf-id/view' } };
+      }
+    }
+  }) as never);
+  try {
+    const link = await moverArquivoDriveParaPasta('https://drive.google.com/file/d/pdf-id/view', 'pasta-sindicato');
+    assert.equal(link, 'https://drive.google.com/file/d/pdf-id/view');
+    assert.equal(update?.addParents, 'pasta-sindicato');
+    assert.equal(update?.removeParents, 'raiz-antiga');
   } finally {
     drive.mock.restore();
   }

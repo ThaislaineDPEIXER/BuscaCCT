@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { Readable } from 'node:stream';
 import { drive as createDriveClient } from '@googleapis/drive';
 import { auth, sheets as createSheetsClient, sheets_v4 } from '@googleapis/sheets';
 import { env } from '../config/env';
@@ -70,14 +71,16 @@ export async function uploadPdfToDrive(fileName: string, filePath: string, folde
       mimeType: 'application/pdf',
       body: fs.createReadStream(filePath)
     },
-    fields: 'id,webViewLink'
+    fields: 'id,webViewLink',
+    supportsAllDrives: true
   });
   const fileId = created.data.id;
   if (!fileId) throw new Error('Google Drive nao retornou o ID do PDF enviado.');
 
   await drive.permissions.create({
     fileId,
-    requestBody: { type: 'anyone', role: 'reader' }
+    requestBody: { type: 'anyone', role: 'reader' },
+    supportsAllDrives: true
   });
 
   return created.data.webViewLink ?? `https://drive.google.com/file/d/${fileId}/view`;
@@ -103,6 +106,80 @@ const PROPRIEDADE_IMPORTACAO = 'radarImportacao';
 
 function driveClient() {
   return createDriveClient({ version: 'v3', auth: createAuth() });
+}
+
+function escaparLiteralDrive(valor: string): string {
+  return valor.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+}
+
+export async function ensureDriveFolder(parentFolderId: string, folderName: string): Promise<string> {
+  if (!parentFolderId || !folderName.trim()) throw new Error('Pasta pai e nome da pasta sao obrigatorios.');
+  const drive = driveClient();
+  const existentes = await drive.files.list({
+    q: `'${escaparLiteralDrive(parentFolderId)}' in parents and name = '${escaparLiteralDrive(folderName)}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false`,
+    fields: 'files(id)',
+    pageSize: 100,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  });
+  const pastaExistente = existentes.data.files?.find(pasta => pasta.id)?.id;
+  if (pastaExistente) return pastaExistente;
+
+  const criada = await drive.files.create({
+    requestBody: { name: folderName.trim(), mimeType: 'application/vnd.google-apps.folder', parents: [parentFolderId] },
+    fields: 'id',
+    supportsAllDrives: true
+  });
+  if (!criada.data.id) throw new Error(`Google Drive nao retornou o ID da pasta ${folderName}.`);
+  return criada.data.id;
+}
+
+export async function moverArquivoDriveParaPasta(fileUrl: string, folderId: string): Promise<string> {
+  const url = new URL(fileUrl);
+  const fileId = url.pathname.match(/\/d\/([^/]+)/)?.[1] ?? url.searchParams.get('id');
+  if (!fileId) throw new Error('URL do arquivo no Google Drive nao contem um ID reconhecivel.');
+
+  const drive = driveClient();
+  const arquivo = await drive.files.get({ fileId, fields: 'parents', supportsAllDrives: true });
+  const paisAtuais = arquivo.data.parents ?? [];
+  if (paisAtuais.includes(folderId)) return fileUrl;
+
+  const movido = await drive.files.update({
+    fileId,
+    addParents: folderId,
+    removeParents: paisAtuais.join(',') || undefined,
+    fields: 'webViewLink',
+    supportsAllDrives: true
+  });
+  return movido.data.webViewLink ?? fileUrl;
+}
+
+export async function uploadTextToDrive(fileName: string, conteudo: string, folderId: string): Promise<string> {
+  const drive = driveClient();
+  const mimeType = 'text/plain';
+  const existentes = await drive.files.list({
+    q: `'${escaparLiteralDrive(folderId)}' in parents and name = '${escaparLiteralDrive(fileName)}' and mimeType = '${mimeType}' and trashed = false`,
+    fields: 'files(id,webViewLink)',
+    pageSize: 100,
+    supportsAllDrives: true,
+    includeItemsFromAllDrives: true
+  });
+  const existente = existentes.data.files?.find(arquivo => arquivo.id);
+  const media = { mimeType, body: Readable.from([Buffer.from(conteudo, 'utf8')]) };
+  const gravado = existente?.id
+    ? await drive.files.update({ fileId: existente.id, media, fields: 'id,webViewLink', supportsAllDrives: true })
+    : await drive.files.create({
+      requestBody: { name: fileName, parents: [folderId], mimeType },
+      media,
+      fields: 'id,webViewLink',
+      supportsAllDrives: true
+    });
+  const fileId = gravado.data.id ?? existente?.id;
+  if (!fileId) throw new Error('Google Drive nao retornou o ID do resumo enviado.');
+  if (!existente) {
+    await drive.permissions.create({ fileId, requestBody: { type: 'anyone', role: 'reader' }, supportsAllDrives: true });
+  }
+  return gravado.data.webViewLink ?? existente?.webViewLink ?? `https://drive.google.com/file/d/${fileId}/view`;
 }
 
 export async function listarDocumentosPendentes(folderId: string, reprocessarPlanilhasSindicais = false): Promise<DocumentoPendente[]> {

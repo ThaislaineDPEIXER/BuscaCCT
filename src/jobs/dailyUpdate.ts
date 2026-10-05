@@ -12,7 +12,7 @@ import { adquirirWorkerLock } from '../services/workerLock';
 import { resolveStoredDocumentPath } from '../services/documentStorage';
 import { storePdf } from '../services/documentStorage';
 import { STATUS_ENQUADRAMENTO, rotuloStatusEnquadramento } from '../services/enquadramentoStatus';
-import { appendRowToSheet, baixarArquivoDrive, ensureCctDashboard, listarDocumentosPendentes, marcarDocumento, syncEnquadramentoMatrix, uploadPdfToDrive } from '../services/googleWorkspace';
+import { appendRowToSheet, baixarArquivoDrive, ensureCctDashboard, ensureDriveFolder, listarDocumentosPendentes, marcarDocumento, moverArquivoDriveParaPasta, syncEnquadramentoMatrix, uploadPdfToDrive, uploadTextToDrive } from '../services/googleWorkspace';
 import { extrairTextoPdf } from '../services/cctOcr';
 import { identificarPdfCctManual, textoContemCnpj } from '../services/documentImport';
 import { buscarESalvarCCTComAno, CctAccessBlockedError, CctCaptchaRequiredError } from '../tools/mteScraper';
@@ -136,27 +136,65 @@ export function montarLinhaPainel(
   ];
 }
 
-async function publicarCctNoWorkspace(sindicato: SindicatoPainel, anoVigencia: number): Promise<void> {
+async function publicarCctNoWorkspace(sindicato: SindicatoPainel, anoVigencia: number, atualizarPainel = true): Promise<void> {
   if (env.documentStorageDriver !== 'workspace') return;
   const cnpjSindicato = sindicato.cnpj;
 
   const cct = await prisma.convencaoColetiva.findUnique({
     where: { cnpjSindicato_anoVigencia: { cnpjSindicato, anoVigencia } },
-    select: { id: true, documentoStoragePath: true, resumoCct: true, _count: { select: { impactosFolha: true } } }
+    select: { id: true, documentoStoragePath: true, fonteUrl: true, parametrosJson: true, resumoCct: true, _count: { select: { impactosFolha: true } } }
   });
-  if (!cct?.documentoStoragePath) return;
+  if (!cct) return;
 
-  const filePath = resolveStoredDocumentPath(env.documentStoragePath, cct.documentoStoragePath);
-  if (!filePath) return;
-  const linkPdf = await uploadPdfToDrive(cct.documentoStoragePath.split('/').pop() ?? 'cct.pdf', filePath, env.googleDriveFolderId);
+  const pastaAno = await ensureDriveFolder(env.googleDriveFolderId, String(anoVigencia));
+  const nomePastaSindicato = `${cnpjSindicato} - ${sindicato.razaoSocial.trim()}`.replace(/[\\/]/g, '-');
+  const pastaSindicato = await ensureDriveFolder(pastaAno, nomePastaSindicato);
+  let linkPdf = '';
+  if (cct.documentoStoragePath) {
+    const filePath = resolveStoredDocumentPath(env.documentStoragePath, cct.documentoStoragePath);
+    if (filePath) {
+      linkPdf = await uploadPdfToDrive(cct.documentoStoragePath.split('/').pop() ?? `CCT-${anoVigencia}-${cnpjSindicato}.pdf`, filePath, pastaSindicato);
+    } else if (cct.documentoStoragePath.includes('drive.google.com')) {
+      linkPdf = await moverArquivoDriveParaPasta(cct.documentoStoragePath, pastaSindicato);
+    } else {
+      linkPdf = cct.documentoStoragePath;
+    }
 
-  await prisma.$transaction([
-    prisma.convencaoColetiva.update({ where: { id: cct.id }, data: { documentoStoragePath: linkPdf } }),
-    prisma.evidenciaCct.updateMany({
-      where: { convencaoColetivaId: cct.id, storagePath: cct.documentoStoragePath },
-      data: { storagePath: linkPdf, url: linkPdf, referencia: 'PDF original arquivado no Google Drive.' }
-    })
-  ]);
+    if (linkPdf && linkPdf !== cct.documentoStoragePath) {
+      await prisma.$transaction([
+        prisma.convencaoColetiva.update({ where: { id: cct.id }, data: { documentoStoragePath: linkPdf } }),
+        prisma.evidenciaCct.updateMany({
+          where: { convencaoColetivaId: cct.id, storagePath: cct.documentoStoragePath },
+          data: { storagePath: linkPdf, url: linkPdf, referencia: 'PDF da CCT arquivado na pasta do sindicato e ano no Google Drive.' }
+        })
+      ]);
+    }
+  }
+
+  let parametros: Record<string, unknown> = {};
+  try {
+    if (cct.parametrosJson) parametros = JSON.parse(cct.parametrosJson) as Record<string, unknown>;
+  } catch (error) {
+    console.warn(`[WORKSPACE] Parametros da CCT ${cnpjSindicato}/${anoVigencia} invalidos para resumo:`, error);
+  }
+  const resumoParametrizado = typeof parametros.resumo_mudancas === 'string' ? parametros.resumo_mudancas.trim() : '';
+  const resumo = cct.resumoCct?.trim() || resumoParametrizado || 'Resumo nao disponivel.';
+  const conteudoResumo = [
+    `Sindicato laboral: ${sindicato.razaoSocial}`,
+    `CNPJ: ${formatarCnpj(cnpjSindicato)}`,
+    `Ano de vigencia: ${anoVigencia}`,
+    `Fonte: ${cct.fonteUrl ?? 'Sistema Mediador do MTE'}`,
+    `PDF: ${linkPdf || 'Nao disponivel'}`,
+    '',
+    'Resumo da CCT:',
+    resumo,
+    '',
+    'Parametros extraidos (JSON):',
+    JSON.stringify(parametros, null, 2)
+  ].join('\n');
+  await uploadTextToDrive(`Resumo-CCT-${anoVigencia}-${cnpjSindicato}.txt`, conteudoResumo, pastaSindicato);
+  if (!atualizarPainel) return;
+  const linkPasta = `https://drive.google.com/drive/folders/${pastaSindicato}`;
   try {
     await ensureCctDashboard(env.googleSheetId);
   } catch (error) {
@@ -173,7 +211,7 @@ async function publicarCctNoWorkspace(sindicato: SindicatoPainel, anoVigencia: n
     sindicato,
     empresasVinculadas.map(({ cliente }) => cliente),
     descreverImpacto(cct._count.impactosFolha, cct.resumoCct),
-    linkPdf
+    linkPasta
   ));
 }
 
@@ -351,6 +389,7 @@ export async function executarFilaMte(): Promise<void> {
         console.info(`[MTE] Processando ${sindicato.cnpj} (${sindicato.razaoSocial})`);
         const anoVigencia = new Date().getFullYear();
         const resultadoCct = await buscarESalvarCCTComAno(sindicato.cnpj, anoVigencia);
+        await publicarCctNoWorkspace(sindicato, resultadoCct.anoVigencia, false);
         const parametros = await extrairCctComIa(resultadoCct.texto);
 
         await persistirExtracaoCct(sindicato.cnpj, resultadoCct.anoVigencia, parametros);
