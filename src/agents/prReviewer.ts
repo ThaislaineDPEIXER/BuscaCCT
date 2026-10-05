@@ -2,6 +2,8 @@ import * as core from '@actions/core';
 import * as github from '@actions/github';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 
+import { resolveGeminiModel } from '../config/aiSettings';
+
 const MAX_DIFF_LENGTH = 120_000;
 const COMMENT_MARKER = '## 🤖 Revisão Arquitetural Automatizada';
 
@@ -54,7 +56,7 @@ async function loadPullRequestDiff(token: string, owner: string, repo: string, p
 async function analyzeDiff(diffText: string): Promise<string> {
   const geminiApiKey = requireEnv('GEMINI_API_KEY');
   const client = new GoogleGenerativeAI(geminiApiKey);
-  const model = client.getGenerativeModel({ model: process.env.GEMINI_MODEL ?? 'gemini-3.8-flash' });
+  const model = client.getGenerativeModel({ model: resolveGeminiModel(process.env.GEMINI_MODEL) });
 
   const prompt = [
     'Você é um Arquiteto de Software revisando um Pull Request.',

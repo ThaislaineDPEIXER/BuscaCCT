@@ -1,5 +1,7 @@
 import 'dotenv/config';
 
+import { normalizeAiProvider, resolveGeminiModel } from './aiSettings';
+
 function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`Variavel de ambiente obrigatoria ausente: ${name}`);
@@ -20,10 +22,7 @@ function booleanEnv(name: string, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
 
-const aiProvider = process.env.AI_PROVIDER ?? 'gemini';
-if (!['anthropic', 'gemini'].includes(aiProvider)) {
-  throw new Error('AI_PROVIDER deve ser anthropic ou gemini');
-}
+const aiProvider = normalizeAiProvider(process.env.AI_PROVIDER);
 const anthropicApiKey = process.env.ANTHROPIC_API_KEY ?? '';
 const geminiApiKey = process.env.GEMINI_API_KEY ?? '';
 if (aiProvider === 'anthropic' && !anthropicApiKey) {
@@ -54,7 +53,7 @@ export const env = {
   anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-3-haiku-20240307',
   anthropicVisionModel: process.env.ANTHROPIC_VISION_MODEL ?? 'claude-3-haiku-20240307',
   geminiApiKey,
-  geminiModel: process.env.GEMINI_MODEL ?? 'gemini-1.5-flash',
+  geminiModel: resolveGeminiModel(process.env.GEMINI_MODEL),
   aiFallbackProvider: (aiProvider === 'gemini' ? 'anthropic' : 'gemini') as 'anthropic' | 'gemini',
   aiFallbackConfigured: aiProvider === 'gemini' ? Boolean(anthropicApiKey) : Boolean(geminiApiKey),
   ibgeBaseUrl: process.env.IBGE_BASE_URL ?? 'https://servicodados.ibge.gov.br/api/v3/agregados',
