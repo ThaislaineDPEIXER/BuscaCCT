@@ -101,6 +101,25 @@ Para produção, mantenha **as duas chaves** (`GEMINI_API_KEY` e `ANTHROPIC_API_
 ## Variáveis de ambiente
 
 O arquivo `.env.example` lista as variáveis de API, worker, MTE, rate limiting, alertas e integrações Google.
+Para o estado atual de produção, os defaults operacionais ficam assim:
+
+```env
+AI_PROVIDER=gemini
+GEMINI_MODEL=gemini-1.5-flash
+ANTHROPIC_MODEL=claude-3-haiku-20240307
+ANTHROPIC_VISION_MODEL=claude-3-haiku-20240307
+MTE_MAX_ATTEMPTS=3
+MTE_NAVIGATION_TIMEOUT_MS=60000
+MTE_BATCH_SIZE=5
+MTE_DELAY_MIN_MS=30000
+MTE_DELAY_MAX_MS=60000
+MTE_REQUEST_DELAY_MS=2000
+MTE_RETRY_BASE_DELAY_MS=5000
+MTE_RETRY_MAX_DELAY_MS=15000
+MTE_STALE_AFTER_HOURS=24
+WORKER_LOCK_TTL_MS=300000
+```
+
 As principais famílias são:
 
 - banco: `DATABASE_URL`, `DIRECT_URL`;
@@ -135,20 +154,22 @@ O workflow `Agent Worker` em `.github/workflows/agent-worker.yml` está alinhado
 
 ### GitHub Variables recomendadas
 
-- `AI_PROVIDER` (`gemini` ou `anthropic`)
-- `GEMINI_MODEL`
-- `ANTHROPIC_MODEL`
-- `ANTHROPIC_VISION_MODEL`
-- `MTE_MAX_ATTEMPTS`
-- `MTE_NAVIGATION_TIMEOUT_MS`
-- `MTE_REQUEST_DELAY_MS`
-- `MTE_BATCH_SIZE`
-- `MTE_STALE_AFTER_HOURS`
-- `MTE_DELAY_MIN_MS`
-- `MTE_DELAY_MAX_MS`
-- `MTE_RETRY_BASE_DELAY_MS`
-- `MTE_RETRY_MAX_DELAY_MS`
-- `WORKER_LOCK_TTL_MS`
+Defaults atuais do worker em produção:
+
+- `AI_PROVIDER=gemini`
+- `GEMINI_MODEL=gemini-1.5-flash`
+- `ANTHROPIC_MODEL=claude-3-haiku-20240307`
+- `ANTHROPIC_VISION_MODEL=claude-3-haiku-20240307`
+- `MTE_MAX_ATTEMPTS=3`
+- `MTE_NAVIGATION_TIMEOUT_MS=60000`
+- `MTE_BATCH_SIZE=5`
+- `MTE_DELAY_MIN_MS=30000`
+- `MTE_DELAY_MAX_MS=60000`
+- `MTE_REQUEST_DELAY_MS=2000`
+- `MTE_RETRY_BASE_DELAY_MS=5000`
+- `MTE_RETRY_MAX_DELAY_MS=15000`
+- `MTE_STALE_AFTER_HOURS=24`
+- `WORKER_LOCK_TTL_MS=300000`
 
 Notas operacionais:
 

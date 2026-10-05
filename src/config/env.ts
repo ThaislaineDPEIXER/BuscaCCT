@@ -20,7 +20,7 @@ function booleanEnv(name: string, fallback: boolean): boolean {
   return ['1', 'true', 'yes', 'on'].includes(value.toLowerCase());
 }
 
-const aiProvider = process.env.AI_PROVIDER ?? 'anthropic';
+const aiProvider = process.env.AI_PROVIDER ?? 'gemini';
 if (!['anthropic', 'gemini'].includes(aiProvider)) {
   throw new Error('AI_PROVIDER deve ser anthropic ou gemini');
 }
@@ -51,10 +51,10 @@ export const env = {
   databaseUrl: required('DATABASE_URL'),
   aiProvider,
   anthropicApiKey,
-  anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-sonnet-4-20250514',
-  anthropicVisionModel: process.env.ANTHROPIC_VISION_MODEL ?? 'claude-3-5-sonnet-20241022',
+  anthropicModel: process.env.ANTHROPIC_MODEL ?? 'claude-3-haiku-20240307',
+  anthropicVisionModel: process.env.ANTHROPIC_VISION_MODEL ?? 'claude-3-haiku-20240307',
   geminiApiKey,
-  geminiModel: process.env.GEMINI_MODEL ?? 'gemini-3.8-flash',
+  geminiModel: process.env.GEMINI_MODEL ?? 'gemini-1.5-flash',
   aiFallbackProvider: (aiProvider === 'gemini' ? 'anthropic' : 'gemini') as 'anthropic' | 'gemini',
   aiFallbackConfigured: aiProvider === 'gemini' ? Boolean(anthropicApiKey) : Boolean(geminiApiKey),
   ibgeBaseUrl: process.env.IBGE_BASE_URL ?? 'https://servicodados.ibge.gov.br/api/v3/agregados',
@@ -72,14 +72,14 @@ export const env = {
   mteCaptchaSelector: process.env.MTE_CAPTCHA_SELECTOR ?? '#imgCaptcha',
   mteMaxAttempts: numberEnv('MTE_MAX_ATTEMPTS', 3),
   mteNavigationTimeoutMs: numberEnv('MTE_NAVIGATION_TIMEOUT_MS', 60_000),
-  mteRequestDelayMs: numberEnv('MTE_REQUEST_DELAY_MS', 10_000),
-  mteBatchSize: numberEnv('MTE_BATCH_SIZE', 50),
-  mteStaleAfterHours: numberEnv('MTE_STALE_AFTER_HOURS', 72),
+  mteRequestDelayMs: numberEnv('MTE_REQUEST_DELAY_MS', 2_000),
+  mteBatchSize: numberEnv('MTE_BATCH_SIZE', 5),
+  mteStaleAfterHours: numberEnv('MTE_STALE_AFTER_HOURS', 24),
   mteDelayMinMs: numberEnv('MTE_DELAY_MIN_MS', 30_000),
   mteDelayMaxMs: numberEnv('MTE_DELAY_MAX_MS', 60_000),
-  workerLockTtlMs: numberEnv('WORKER_LOCK_TTL_MS', 20 * 60_000),
-  mteRetryBaseDelayMs: numberEnv('MTE_RETRY_BASE_DELAY_MS', 15 * 60_000),
-  mteRetryMaxDelayMs: numberEnv('MTE_RETRY_MAX_DELAY_MS', 6 * 60 * 60_000),
+  workerLockTtlMs: numberEnv('WORKER_LOCK_TTL_MS', 300_000),
+  mteRetryBaseDelayMs: numberEnv('MTE_RETRY_BASE_DELAY_MS', 5_000),
+  mteRetryMaxDelayMs: numberEnv('MTE_RETRY_MAX_DELAY_MS', 15_000),
   cronTimezone: process.env.CRON_TIMEZONE ?? 'America/Sao_Paulo',
   googleApiKey: process.env.GOOGLE_CUSTOM_SEARCH_API_KEY ?? '',
   googleSearchEngineId: process.env.GOOGLE_CUSTOM_SEARCH_ENGINE_ID ?? '',
