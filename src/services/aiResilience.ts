@@ -3,11 +3,25 @@ export type AiProvider = 'anthropic' | 'gemini';
 const RETRY_DELAYS_MS = [2_000, 5_000];
 const TRANSIENT_STATUS = new Set([408, 409, 429, 500, 502, 503, 504]);
 const TRANSIENT_CODE = /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|timeout/i;
+const PROVIDER_CAPABILITY_MESSAGE = /not found for api version|not supported for generatecontent|model[s]?\/.+not found|unsupported model|does not support/i;
 
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
 
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+
+  const { message } = getErrorDetails(error);
+  if (message) {
+    return message;
+  }
+
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return String(error);
+  }
 }
 
 function getErrorDetails(error: unknown): { status?: number; message: string; errorDetails: Array<Record<string, unknown>> } {
@@ -48,6 +62,12 @@ function isQuotaExhaustedAiError(error: unknown): boolean {
     const type = String(detail['@type'] ?? '');
     return type.includes('QuotaFailure') || type.includes('RetryInfo');
   });
+}
+
+function isProviderCapabilityAiError(error: unknown): boolean {
+  const { status, message } = getErrorDetails(error);
+  if (status !== 404 && status !== 400) return false;
+  return PROVIDER_CAPABILITY_MESSAGE.test(message);
 }
 
 function shouldRetryAiError(error: unknown): boolean {
@@ -111,7 +131,8 @@ export async function runWithAiProviderFallback<T>(input: {
   try {
     return await runWithRetries(`${operation}/${provider}`, primary, delaysMs);
   } catch (error) {
-    if (!isTransientAiError(error)) throw error;
+    const fallbackableError = isTransientAiError(error) || isProviderCapabilityAiError(error);
+    if (!fallbackableError) throw error;
 
     if (!fallback) {
       throw new Error(
@@ -120,7 +141,7 @@ export async function runWithAiProviderFallback<T>(input: {
       );
     }
 
-    console.warn(`[AI] ${operation} esgotou retries no ${provider}; alternando automaticamente para ${fallbackProvider}. Motivo: ${errorMessage(error)}`);
+    console.warn(`[AI] ${operation} falhou no ${provider}; alternando automaticamente para ${fallbackProvider}. Motivo: ${errorMessage(error)}`);
     return runWithRetries(`${operation}/${fallbackProvider}`, fallback, delaysMs);
   }
 }

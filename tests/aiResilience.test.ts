@@ -118,6 +118,32 @@ test('runWithAiProviderFallback alterna sem retries inúteis quando o Gemini est
   assert.deepEqual(chamadas, ['gemini', 'anthropic']);
 });
 
+test('runWithAiProviderFallback alterna imediatamente quando o modelo do Gemini não é suportado', async () => {
+  const chamadas: string[] = [];
+
+  const resultado = await runWithAiProviderFallback({
+    provider: 'gemini',
+    operation: 'extracao-cct',
+    delaysMs: [0, 0],
+    handlers: {
+      gemini: async () => {
+        chamadas.push('gemini');
+        throw {
+          status: 404,
+          message: 'models/gemini-1.5-flash is not found for API version v1beta, or is not supported for generateContent'
+        };
+      },
+      anthropic: async () => {
+        chamadas.push('anthropic');
+        return 'ok-anthropic';
+      }
+    }
+  });
+
+  assert.equal(resultado, 'ok-anthropic');
+  assert.deepEqual(chamadas, ['gemini', 'anthropic']);
+});
+
 test('runWithAiProviderFallback explica quando erro transitório ocorre sem fallback configurado', async () => {
   await assert.rejects(
     () => runWithAiProviderFallback({
