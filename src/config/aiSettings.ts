@@ -1,12 +1,6 @@
 export type AiProvider = 'anthropic' | 'gemini';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
-const GEMINI_MODEL_FALLBACKS = [
-  'gemini-2.0-flash',
-  'gemini-1.5-flash',
-  'gemini-1.5-flash-latest',
-  'gemini-1.0-pro'
-] as const;
+export const DEFAULT_GEMINI_MODEL = 'gemini-3.8-flash';
 
 function normalizeValue(value: string | undefined): string {
   return (value ?? '')
@@ -42,5 +36,5 @@ export function resolveGeminiModel(value: string | undefined): string {
 
 export function resolveGeminiModelCandidates(value: string | undefined): string[] {
   const preferred = resolveGeminiModel(value);
-  return Array.from(new Set([preferred, DEFAULT_GEMINI_MODEL, ...GEMINI_MODEL_FALLBACKS]));
+  return Array.from(new Set([preferred, DEFAULT_GEMINI_MODEL]));
 }

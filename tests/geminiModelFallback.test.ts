@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 
 import { runWithGeminiModelFallback } from '../src/services/geminiModelFallback';
 
-test('tenta modelos alternativos do Gemini quando o primeiro retorna 404', async () => {
+test('usa Gemini 3.8 quando o modelo configurado retorna 404', async () => {
   const tentativas: string[] = [];
   const genAI = {
     getGenerativeModel: ({ model }: { model: string }) => ({ modelName: model })
@@ -17,6 +17,6 @@ test('tenta modelos alternativos do Gemini quando o primeiro retorna 404', async
     return modelName;
   });
 
-  assert.equal(resultado, 'gemini-2.0-flash');
-  assert.deepEqual(tentativas, ['gemini-2.5-flash', 'gemini-2.0-flash']);
+  assert.equal(resultado, 'gemini-3.8-flash');
+  assert.deepEqual(tentativas, ['gemini-2.5-flash', 'gemini-3.8-flash']);
 });
