@@ -153,7 +153,7 @@ O workflow `Agent Worker` em `.github/workflows/agent-worker.yml` está alinhado
 
 ### GitHub Secrets opcionais
 
-- `TI_WEBHOOK_URL`
+- `TI_WEBHOOK_URL` (recebe falhas do MTE e indisponibilidade terminal de provider de IA)
 
 ### GitHub Variables recomendadas
 
@@ -230,6 +230,7 @@ Validação atual do workspace:
 - uploads, consultas com IA e demais rotas têm rate limits independentes.
 - o scraper não tenta burlar CAPTCHA visual; quando necessário, usa fallback oficial por site ou preserva a pendência operacional.
 - o webhook de TI não interrompe a fila se falhar.
+- quando o Anthropic entra em indisponibilidade terminal de billing/crédito, o worker envia um único webhook e desativa esse fallback até reiniciar o processo.
 - em múltiplas réplicas, o lock distribuído evita duas filas MTE no mesmo CNPJ.
 
 ## Observações finais

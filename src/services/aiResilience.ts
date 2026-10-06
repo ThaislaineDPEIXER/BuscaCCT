@@ -1,5 +1,7 @@
 export type AiProvider = 'anthropic' | 'gemini';
 
+import { notificarIndisponibilidadeProviderAi } from './operationalAlert';
+
 const RETRY_DELAYS_MS = [2_000, 5_000];
 const TRANSIENT_STATUS = new Set([408, 409, 429, 500, 502, 503, 504]);
 const TRANSIENT_CODE = /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|timeout/i;
@@ -63,11 +65,13 @@ function buildProviderUnavailableReason(provider: AiProvider, error: unknown): s
   return `${providerLabel(provider)} indisponível: ${message}`;
 }
 
-function markProviderUnavailable(provider: AiProvider, error: unknown): string | null {
+function markProviderUnavailable(provider: AiProvider, error: unknown): { reason: string; markedNow: boolean } | null {
   const reason = buildProviderUnavailableReason(provider, error);
   if (!reason) return null;
+  const anterior = unavailableProviders.get(provider);
+  if (anterior) return { reason: anterior, markedNow: false };
   unavailableProviders.set(provider, reason);
-  return reason;
+  return { reason, markedNow: true };
 }
 
 function getProviderUnavailableReason(provider: AiProvider): string | null {
@@ -175,15 +179,18 @@ export async function runWithAiProviderFallback<T>(input: {
   try {
     return await runWithRetries(`${operation}/${provider}`, primary, delaysMs);
   } catch (error) {
-    const primaryTerminalReason = markProviderUnavailable(provider, error);
-    if (primaryTerminalReason) {
+    const primaryTerminal = markProviderUnavailable(provider, error);
+    if (primaryTerminal) {
+      if (primaryTerminal.markedNow) {
+        await notificarIndisponibilidadeProviderAi({ provider, operation, reason: primaryTerminal.reason });
+      }
       if (!fallback) {
-        throw new Error(`[AI] ${operation} falhou no ${provider} e não há fallback configurado. Motivo: ${primaryTerminalReason}`, { cause: error });
+        throw new Error(`[AI] ${operation} falhou no ${provider} e não há fallback configurado. Motivo: ${primaryTerminal.reason}`, { cause: error });
       }
       if (fallbackUnavailableReason) {
-        throw new Error(`[AI] ${operation} não pode usar ${provider} nem ${fallbackProvider}. Motivos: ${primaryTerminalReason}; ${fallbackUnavailableReason}`, { cause: error });
+        throw new Error(`[AI] ${operation} não pode usar ${provider} nem ${fallbackProvider}. Motivos: ${primaryTerminal.reason}; ${fallbackUnavailableReason}`, { cause: error });
       }
-      console.warn(`[AI] ${operation} com ${provider} indisponível; desativando este provider no processo e alternando automaticamente para ${fallbackProvider}. Motivo: ${primaryTerminalReason}`);
+      console.warn(`[AI] ${operation} com ${provider} indisponível; desativando este provider no processo e alternando automaticamente para ${fallbackProvider}. Motivo: ${primaryTerminal.reason}`);
       return runWithRetries(`${operation}/${fallbackProvider}`, fallback, delaysMs);
     }
 
@@ -208,9 +215,12 @@ export async function runWithAiProviderFallback<T>(input: {
     try {
       return await runWithRetries(`${operation}/${fallbackProvider}`, fallback, delaysMs);
     } catch (fallbackError) {
-      const fallbackTerminalReason = markProviderUnavailable(fallbackProvider, fallbackError);
-      if (fallbackTerminalReason) {
-        console.warn(`[AI] ${operation} com ${fallbackProvider} indisponível; desativando este provider no processo. Motivo: ${fallbackTerminalReason}`);
+      const fallbackTerminal = markProviderUnavailable(fallbackProvider, fallbackError);
+      if (fallbackTerminal) {
+        if (fallbackTerminal.markedNow) {
+          await notificarIndisponibilidadeProviderAi({ provider: fallbackProvider, operation, reason: fallbackTerminal.reason });
+        }
+        console.warn(`[AI] ${operation} com ${fallbackProvider} indisponível; desativando este provider no processo. Motivo: ${fallbackTerminal.reason}`);
       }
       throw fallbackError;
     }
