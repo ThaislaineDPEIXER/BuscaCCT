@@ -95,9 +95,11 @@ A extração em `src/services/claudeAgent.ts` e a leitura documental em `src/ser
 - reaplicam tentativas em erros transitórios (`429`, `500`, `502`, `503`, `504`, timeout etc.);
 - tentam `GEMINI_MODEL` e, em `404`/modelo incompatível no Gemini, fazem fallback para `gemini-3.8-flash`;
 - fazem failover automático para o provedor secundário quando ele estiver configurado;
+- desativam o provider secundário no restante da execução se ele responder indisponibilidade terminal de billing/crédito, evitando chamadas repetidas sem chance de sucesso;
 - expõem no `/readiness` se o failover está realmente armado (`aiFallbackConfigured`).
 
 Para produção, mantenha **as duas chaves** (`GEMINI_API_KEY` e `ANTHROPIC_API_KEY`) configuradas. Isso evita que um `503` temporário do Gemini interrompa a extração do worker sem alternativa.
+Se o Anthropic estiver configurado, mas sem saldo/crédito, o worker registra a indisponibilidade e para de insistir nesse fallback até o próximo processo.
 
 ## Variáveis de ambiente
 
@@ -173,6 +175,8 @@ Defaults atuais do worker em produção:
 - `WORKER_LOCK_TTL_MS=300000`
 
 Notas operacionais:
+
+- Se o fallback Anthropic responder erro terminal de billing/crédito, o worker desativa esse provider no processo atual e passa a reportar a indisponibilidade imediatamente.
 
 - o workflow fixa `DOCUMENT_STORAGE_DRIVER=workspace` para publicar artefatos no Google Workspace;
 - o input manual `retry_failed_union_imports` reprocessa planilhas/PDFs com erro e pendências do MTE;

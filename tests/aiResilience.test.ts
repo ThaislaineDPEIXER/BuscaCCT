@@ -1,7 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isTransientAiError, runWithAiProviderFallback } from '../src/services/aiResilience';
+import { isTransientAiError, resetUnavailableAiProviders, runWithAiProviderFallback } from '../src/services/aiResilience';
+
+test.beforeEach(() => {
+  resetUnavailableAiProviders();
+});
 
 test('isTransientAiError identifica falhas transitórias por status e rede', () => {
   assert.equal(isTransientAiError({ status: 503 }), true);
@@ -158,4 +162,61 @@ test('runWithAiProviderFallback explica quando erro transitório ocorre sem fall
     }),
     /failover para anthropic não está configurado/
   );
+});
+
+test('runWithAiProviderFallback deixa de insistir no Anthropic quando a conta fica sem créditos', async () => {
+  const chamadas: string[] = [];
+
+  await assert.rejects(
+    () => runWithAiProviderFallback({
+      provider: 'gemini',
+      operation: 'extracao-cct',
+      delaysMs: [0],
+      handlers: {
+        gemini: async () => {
+          chamadas.push('gemini-1');
+          throw {
+            status: 404,
+            message: 'models/gemini-2.5-flash is not found for API version v1beta'
+          };
+        },
+        anthropic: async () => {
+          chamadas.push('anthropic-1');
+          throw {
+            status: 400,
+            message: 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'
+          };
+        }
+      }
+    }),
+    error => {
+      assert.equal(typeof error, 'object');
+      assert.match(String((error as { message?: string }).message ?? ''), /credit balance is too low/);
+      return true;
+    }
+  );
+
+  await assert.rejects(
+    () => runWithAiProviderFallback({
+      provider: 'gemini',
+      operation: 'leitura-documento',
+      delaysMs: [0],
+      handlers: {
+        gemini: async () => {
+          chamadas.push('gemini-2');
+          throw {
+            status: 404,
+            message: 'models/gemini-2.5-flash is not found for API version v1beta'
+          };
+        },
+        anthropic: async () => {
+          chamadas.push('anthropic-2');
+          return 'nao-deveria-executar';
+        }
+      }
+    }),
+    /failover para anthropic está indisponível/
+  );
+
+  assert.deepEqual(chamadas, ['gemini-1', 'anthropic-1', 'gemini-2']);
 });
