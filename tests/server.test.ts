@@ -5,6 +5,7 @@ import { AddressInfo } from 'node:net';
 import { randomUUID } from 'node:crypto';
 import ExcelJS from 'exceljs';
 
+import { resetUnavailableAiProviders, runWithAiProviderFallback } from '../src/services/aiResilience';
 import { createApp } from '../src/server';
 import { prisma } from '../src/db';
 
@@ -38,6 +39,50 @@ test('GET /health responde OK', async () => {
     assert.equal(body.status, 'ok');
   } finally {
     server.close();
+  }
+});
+
+
+test('GET /readiness responde 503 e expõe failover degradado em runtime', async () => {
+  resetUnavailableAiProviders();
+
+  await assert.rejects(
+    () => runWithAiProviderFallback({
+      provider: 'gemini',
+      operation: 'extracao-cct',
+      delaysMs: [0],
+      handlers: {
+        gemini: async () => {
+          throw {
+            status: 404,
+            message: 'models/gemini-2.5-flash is not found for API version v1beta'
+          };
+        },
+        anthropic: async () => {
+          throw {
+            status: 400,
+            message: 'Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.'
+          };
+        }
+      }
+    })
+  );
+
+  const { server, port } = await startTestServer();
+
+  try {
+    const response = await fetch(`http://127.0.0.1:${port}/readiness`);
+    assert.equal(response.status, 503);
+
+    const body = await response.json();
+    assert.equal(body.status, 'degradado');
+    assert.equal(body.aiFallbackConfigured, true);
+    assert.equal(body.aiFallbackOperational, false);
+    assert.match(body.aiFallbackUnavailableReason ?? '', /credit balance is too low/i);
+    assert.match(body.anthropicUnavailableReason ?? '', /credit balance is too low/i);
+  } finally {
+    server.close();
+    resetUnavailableAiProviders();
   }
 });
 

@@ -113,7 +113,7 @@ Liveness público:
 curl -fsS http://localhost:3000/health
 ```
 
-Readiness público, com verificação ativa de PostgreSQL e Anthropic:
+Readiness público, com verificação ativa de PostgreSQL, provedor primário e estado operacional do failover de IA:
 
 ```bash
 curl -i http://localhost:3000/readiness
@@ -218,7 +218,7 @@ Esse comando apaga o PostgreSQL e o volume local de documentos.
 - [ ] secrets fora do Git
 - [ ] `PORTAL_AUTH_ENABLED=true`
 - [ ] CORS restrito ao portal
-- [ ] `/health` e `/readiness` integrados ao orquestrador
+- [x] `/health` e `/readiness` integrados ao orquestrador
 - [ ] API e worker separados
 - [ ] lock distribuído validado
 - [ ] volumes/document storage com política de backup
@@ -232,5 +232,5 @@ Esse comando apaga o PostgreSQL e o volume local de documentos.
 - O Mediador real bloqueia automação com anti-bot no ambiente validado.
 - O código não executa bypass de CAPTCHA nem fabrica CCT.
 - O storage atual é volume local persistente; GCS ainda requer adaptador próprio.
-- O readiness Anthropic exige `ANTHROPIC_API_KEY` real em produção.
+- O `/readiness` retorna `503` quando PostgreSQL, provedor primário ou failover configurado entram em estado degradado.
 - `npm audit` ainda possui débito transitivo mapeado em Prisma/ExcelJS e deve ser acompanhado no CI.

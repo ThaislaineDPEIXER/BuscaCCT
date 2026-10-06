@@ -8,6 +8,7 @@ Esta entrega consolida o Radar CCT como um pipeline autônomo, resiliente e pron
 
 - Fallback automático do MTE para o site oficial do sindicato quando houver anti-bot, CAPTCHA, pendência manual prévia ou ausência de resultado utilizável.
 - Orquestração dinâmica do provedor de IA, com suporte consistente a `Gemini` e `Anthropic` em readiness e rotinas de extração.
+- Exposição de `aiFallbackOperational` e motivos de indisponibilidade no `/readiness`, facilitando integração com orquestrador e monitoramento.
 - Alinhamento da infraestrutura e dos workflows auxiliares para `Node 22`, compatível com o runtime exigido pelo projeto.
 - Exposição padronizada do PostgreSQL local para testes automatizados e validação reproduzível do pipeline.
 - Expansão da cobertura automatizada para serviços core e rotas HTTP críticas.
