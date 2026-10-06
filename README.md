@@ -64,7 +64,7 @@ Endpoints mais relevantes:
 - `POST /api/radar/sindicatos/:id/fallback/cct`: força captura de CCT via site oficial.
 - `GET /api/modulo-dp/alertas/stream`: abre SSE de alertas.
 - `GET /health`: liveness.
-- `GET /readiness`: readiness com PostgreSQL, provedor principal e estado do failover de IA.
+- `GET /readiness`: readiness com PostgreSQL, provedor principal, `aiFallbackOperational` e motivos de indisponibilidade em runtime.
 
 ### Worker
 
@@ -95,11 +95,11 @@ A extração em `src/services/claudeAgent.ts` e a leitura documental em `src/ser
 - reaplicam tentativas em erros transitórios (`429`, `500`, `502`, `503`, `504`, timeout etc.);
 - tentam `GEMINI_MODEL` e, em `404`/modelo incompatível no Gemini, fazem fallback para `gemini-3.8-flash`;
 - fazem failover automático para o provedor secundário quando ele estiver configurado;
-- desativam o provider secundário no restante da execução se ele responder indisponibilidade terminal de billing/crédito, evitando chamadas repetidas sem chance de sucesso;
-- expõem no `/readiness` se o failover está realmente armado (`aiFallbackConfigured`).
+- desativam provedores no restante da execução quando houver indisponibilidade terminal (ex.: billing/crédito no Anthropic ou quota diária longa no Gemini), evitando chamadas repetidas sem chance de sucesso;
+- expõem no `/readiness` se o failover está armado (`aiFallbackConfigured`), se segue operacional (`aiFallbackOperational`) e o motivo de indisponibilidade em runtime.
 
 Para produção, mantenha **as duas chaves** (`GEMINI_API_KEY` e `ANTHROPIC_API_KEY`) configuradas. Isso evita que um `503` temporário do Gemini interrompa a extração do worker sem alternativa.
-Se o Anthropic estiver configurado, mas sem saldo/crédito, o worker registra a indisponibilidade e para de insistir nesse fallback até o próximo processo.
+Se o Anthropic ficar sem saldo/crédito, ou o Gemini esgotar quota com janela longa de retry, o worker registra a indisponibilidade, envia um único alerta operacional e para de insistir nesse provider até o próximo processo.
 
 ## Variáveis de ambiente
 
@@ -176,7 +176,7 @@ Defaults atuais do worker em produção:
 
 Notas operacionais:
 
-- Se o fallback Anthropic responder erro terminal de billing/crédito, o worker desativa esse provider no processo atual e passa a reportar a indisponibilidade imediatamente.
+- Se Anthropic ou Gemini entrarem em indisponibilidade terminal, o worker desativa esse provider no processo atual e passa a reportar a indisponibilidade imediatamente no `/readiness` e no webhook operacional.
 
 - o workflow fixa `DOCUMENT_STORAGE_DRIVER=workspace` para publicar artefatos no Google Workspace;
 - o input manual `retry_failed_union_imports` reprocessa planilhas/PDFs com erro e pendências do MTE;
@@ -230,7 +230,7 @@ Validação atual do workspace:
 - uploads, consultas com IA e demais rotas têm rate limits independentes.
 - o scraper não tenta burlar CAPTCHA visual; quando necessário, usa fallback oficial por site ou preserva a pendência operacional.
 - o webhook de TI não interrompe a fila se falhar.
-- quando o Anthropic entra em indisponibilidade terminal de billing/crédito, o worker envia um único webhook e desativa esse fallback até reiniciar o processo.
+- quando Anthropic ou Gemini entram em indisponibilidade terminal, o worker envia um único webhook por provider/motivo e desativa esse provider até reiniciar o processo.
 - em múltiplas réplicas, o lock distribuído evita duas filas MTE no mesmo CNPJ.
 
 ## Observações finais

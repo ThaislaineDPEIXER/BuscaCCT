@@ -1,12 +1,13 @@
-export type AiProvider = 'anthropic' | 'gemini';
-
 import { notificarIndisponibilidadeProviderAi } from './operationalAlert';
+
+export type AiProvider = 'anthropic' | 'gemini';
 
 const RETRY_DELAYS_MS = [2_000, 5_000];
 const TRANSIENT_STATUS = new Set([408, 409, 429, 500, 502, 503, 504]);
 const TRANSIENT_CODE = /ECONNRESET|ECONNREFUSED|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|timeout/i;
 const PROVIDER_CAPABILITY_MESSAGE = /not found for api version|not supported for generatecontent|model[s]?\/.+not found|unsupported model|does not support/i;
 const TERMINAL_PROVIDER_UNAVAILABLE_MESSAGE = /credit balance is too low|insufficient credits|account deactivated|billing.+required|payment.+required/i;
+const QUOTA_PROVIDER_UNAVAILABLE_MESSAGE = /quota exceeded|free_tier|daily limit|resource has been exhausted|billing details|please retry in\s+\d+h/i;
 const unavailableProviders = new Map<AiProvider, string>();
 
 const wait = (milliseconds: number) => new Promise(resolve => setTimeout(resolve, milliseconds));
@@ -58,8 +59,27 @@ function providerLabel(provider: AiProvider): string {
   return provider === 'gemini' ? 'Gemini' : 'Anthropic';
 }
 
+function isRunTerminalQuotaAiError(error: unknown): boolean {
+  const { status, message, errorDetails } = getErrorDetails(error);
+  if (status !== 429) return false;
+
+  if (QUOTA_PROVIDER_UNAVAILABLE_MESSAGE.test(message)) {
+    return true;
+  }
+
+  return errorDetails.some(detail => {
+    const type = String(detail['@type'] ?? '');
+    return type.includes('QuotaFailure') && /quota|free_tier|resource has been exhausted/i.test(message);
+  });
+}
+
 function buildProviderUnavailableReason(provider: AiProvider, error: unknown): string | null {
   const { status, message } = getErrorDetails(error);
+
+  if (isRunTerminalQuotaAiError(error)) {
+    return `${providerLabel(provider)} indisponível nesta execução: ${message}`;
+  }
+
   if (status !== 400 && status !== 402 && status !== 403) return null;
   if (!TERMINAL_PROVIDER_UNAVAILABLE_MESSAGE.test(message)) return null;
   return `${providerLabel(provider)} indisponível: ${message}`;
@@ -68,14 +88,21 @@ function buildProviderUnavailableReason(provider: AiProvider, error: unknown): s
 function markProviderUnavailable(provider: AiProvider, error: unknown): { reason: string; markedNow: boolean } | null {
   const reason = buildProviderUnavailableReason(provider, error);
   if (!reason) return null;
-  const anterior = unavailableProviders.get(provider);
-  if (anterior) return { reason: anterior, markedNow: false };
+  const previous = unavailableProviders.get(provider);
+  if (previous) return { reason: previous, markedNow: false };
   unavailableProviders.set(provider, reason);
   return { reason, markedNow: true };
 }
 
-function getProviderUnavailableReason(provider: AiProvider): string | null {
+export function getUnavailableAiProviderReason(provider: AiProvider): string | null {
   return unavailableProviders.get(provider) ?? null;
+}
+
+export function getUnavailableAiProvidersSnapshot(): Partial<Record<AiProvider, string>> {
+  return {
+    ...(unavailableProviders.get('anthropic') ? { anthropic: unavailableProviders.get('anthropic') } : {}),
+    ...(unavailableProviders.get('gemini') ? { gemini: unavailableProviders.get('gemini') } : {})
+  };
 }
 
 export function resetUnavailableAiProviders(): void {
@@ -153,8 +180,8 @@ export async function runWithAiProviderFallback<T>(input: {
   const primary = handlers[provider];
   const fallbackProvider: AiProvider = provider === 'gemini' ? 'anthropic' : 'gemini';
   const fallback = handlers[fallbackProvider];
-  const primaryUnavailableReason = getProviderUnavailableReason(provider);
-  const fallbackUnavailableReason = getProviderUnavailableReason(fallbackProvider);
+  const primaryUnavailableReason = getUnavailableAiProviderReason(provider);
+  const fallbackUnavailableReason = getUnavailableAiProviderReason(fallbackProvider);
 
   if (!primary) {
     if (!fallback) throw new Error(`Handler de IA ausente para o provedor ${provider}.`);

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { isTransientAiError, resetUnavailableAiProviders, runWithAiProviderFallback } from '../src/services/aiResilience';
+import { getUnavailableAiProviderReason, isTransientAiError, resetUnavailableAiProviders, runWithAiProviderFallback } from '../src/services/aiResilience';
 
 test.beforeEach(() => {
   resetUnavailableAiProviders();
@@ -95,16 +95,16 @@ test('runWithAiProviderFallback usa o secundário quando o primário está indis
   assert.equal(resultado, 'ok-anthropic');
 });
 
-test('runWithAiProviderFallback alterna sem retries inúteis quando o Gemini estoura quota diária', async () => {
+test('runWithAiProviderFallback desativa o Gemini no restante da execução quando a quota diária esgota', async () => {
   const chamadas: string[] = [];
 
-  const resultado = await runWithAiProviderFallback({
+  const primeiroResultado = await runWithAiProviderFallback({
     provider: 'gemini',
     operation: 'extracao-cct',
     delaysMs: [0, 0],
     handlers: {
       gemini: async () => {
-        chamadas.push('gemini');
+        chamadas.push('gemini-1');
         throw {
           status: 429,
           message: 'Quota exceeded for metric generate_content_free_tier_requests. Please retry in 7h.',
@@ -112,14 +112,32 @@ test('runWithAiProviderFallback alterna sem retries inúteis quando o Gemini est
         };
       },
       anthropic: async () => {
-        chamadas.push('anthropic');
-        return 'ok-anthropic';
+        chamadas.push('anthropic-1');
+        return 'ok-anthropic-1';
       }
     }
   });
 
-  assert.equal(resultado, 'ok-anthropic');
-  assert.deepEqual(chamadas, ['gemini', 'anthropic']);
+  const segundoResultado = await runWithAiProviderFallback({
+    provider: 'gemini',
+    operation: 'leitura-documento',
+    delaysMs: [0],
+    handlers: {
+      gemini: async () => {
+        chamadas.push('gemini-2');
+        return 'nao-deveria-executar';
+      },
+      anthropic: async () => {
+        chamadas.push('anthropic-2');
+        return 'ok-anthropic-2';
+      }
+    }
+  });
+
+  assert.equal(primeiroResultado, 'ok-anthropic-1');
+  assert.equal(segundoResultado, 'ok-anthropic-2');
+  assert.match(getUnavailableAiProviderReason('gemini') ?? '', /Quota exceeded/);
+  assert.deepEqual(chamadas, ['gemini-1', 'anthropic-1', 'anthropic-2']);
 });
 
 test('runWithAiProviderFallback alterna imediatamente quando o modelo do Gemini não é suportado', async () => {

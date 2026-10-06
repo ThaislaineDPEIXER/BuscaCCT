@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { env } from '../config/env';
 import { prisma } from '../db';
+import { getUnavailableAiProviderReason } from './aiResilience';
 import { runWithGeminiModelFallback } from './geminiModelFallback';
 
 const anthropic = env.anthropicApiKey ? new Anthropic({ apiKey: env.anthropicApiKey }) : null;
@@ -17,8 +18,13 @@ export type ReadinessResult = {
   aiProvider: AiProvider;
   aiFallbackProvider: AiProvider;
   aiFallbackConfigured: boolean;
+  aiFallbackOperational: boolean;
+  aiProviderUnavailableReason?: string;
+  aiFallbackUnavailableReason?: string;
   anthropic?: HealthStatus;
   gemini?: HealthStatus;
+  anthropicUnavailableReason?: string;
+  geminiUnavailableReason?: string;
   erro?: string;
 };
 
@@ -29,6 +35,30 @@ async function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T
     promise,
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))
   ]);
+}
+
+function appendErro(base: string | undefined, detalhe: string | undefined): string | undefined {
+  if (!detalhe) return base;
+  return base ? `${base}; ${detalhe}` : detalhe;
+}
+
+export function avaliarEstadoRuntimeIa(input: {
+  aiProvider: AiProvider;
+  aiFallbackProvider: AiProvider;
+  aiFallbackConfigured: boolean;
+}): Pick<ReadinessResult, 'aiFallbackOperational' | 'aiProviderUnavailableReason' | 'aiFallbackUnavailableReason' | 'anthropicUnavailableReason' | 'geminiUnavailableReason'> {
+  const anthropicUnavailableReason = getUnavailableAiProviderReason('anthropic') ?? undefined;
+  const geminiUnavailableReason = getUnavailableAiProviderReason('gemini') ?? undefined;
+  const aiProviderUnavailableReason = getUnavailableAiProviderReason(input.aiProvider) ?? undefined;
+  const aiFallbackUnavailableReason = getUnavailableAiProviderReason(input.aiFallbackProvider) ?? undefined;
+
+  return {
+    aiFallbackOperational: input.aiFallbackConfigured && !aiFallbackUnavailableReason,
+    ...(aiProviderUnavailableReason ? { aiProviderUnavailableReason } : {}),
+    ...(aiFallbackUnavailableReason ? { aiFallbackUnavailableReason } : {}),
+    ...(anthropicUnavailableReason ? { anthropicUnavailableReason } : {}),
+    ...(geminiUnavailableReason ? { geminiUnavailableReason } : {})
+  };
 }
 
 export async function verificarDisponibilidadeIa(
@@ -81,9 +111,21 @@ export async function verificarReadiness(): Promise<ReadinessResult> {
     anthropic: probeAnthropic,
     gemini: probeGemini
   });
-  if (ia.erro) erro = `${erro ? `${erro}; ` : ''}${ia.erro}`;
+  erro = appendErro(erro, ia.erro);
 
-  const status = postgres === 'ok' && ia.ai === 'ok' ? 'ok' : 'degradado';
+  const runtime = avaliarEstadoRuntimeIa({
+    aiProvider,
+    aiFallbackProvider: env.aiFallbackProvider,
+    aiFallbackConfigured: env.aiFallbackConfigured
+  });
+  erro = appendErro(erro, runtime.aiFallbackUnavailableReason ? `Failover IA: ${runtime.aiFallbackUnavailableReason}` : undefined);
+
+  const status = postgres === 'ok'
+    && ia.ai === 'ok'
+    && (!env.aiFallbackConfigured || runtime.aiFallbackOperational)
+    ? 'ok'
+    : 'degradado';
+
   return {
     status,
     postgres,
@@ -91,8 +133,13 @@ export async function verificarReadiness(): Promise<ReadinessResult> {
     aiProvider,
     aiFallbackProvider: env.aiFallbackProvider,
     aiFallbackConfigured: env.aiFallbackConfigured,
+    aiFallbackOperational: runtime.aiFallbackOperational,
+    ...(runtime.aiProviderUnavailableReason ? { aiProviderUnavailableReason: runtime.aiProviderUnavailableReason } : {}),
+    ...(runtime.aiFallbackUnavailableReason ? { aiFallbackUnavailableReason: runtime.aiFallbackUnavailableReason } : {}),
     ...(ia.anthropic ? { anthropic: ia.anthropic } : {}),
     ...(ia.gemini ? { gemini: ia.gemini } : {}),
+    ...(runtime.anthropicUnavailableReason ? { anthropicUnavailableReason: runtime.anthropicUnavailableReason } : {}),
+    ...(runtime.geminiUnavailableReason ? { geminiUnavailableReason: runtime.geminiUnavailableReason } : {}),
     ...(erro ? { erro } : {})
   };
 }
